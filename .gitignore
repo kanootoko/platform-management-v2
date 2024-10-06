@@ -1,0 +1,10 @@
+/.venv
+__pycache__
+*.ipynb
+*.geojson
+/dist
+*.wheel
+*.env
+*.log
+*.yaml
+*.pickle

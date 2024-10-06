@@ -1,0 +1,55 @@
+[tool.poetry]
+name = "platform-management-v2"
+version = "0.1.0"
+description = "Temporary utility for data manipulation of IDU Digital City Platform"
+authors = ["Aleksei Sokol <kanootoko@gmail.com>"]
+license = "MIT"
+readme = "README.md"
+packages = [{ include = "pmv2" }]
+
+[tool.poetry.scripts]
+pmv2 = "pmv2.cli:main"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+click = "^8.1.7"
+structlog = "^24.4.0"
+aiohttp = "^3.10.9"
+geopandas = "^1.0.1"
+shapely = "^2.0.6"
+pandas = "^2.2.3"
+pydantic = "^2.9.2"
+geojson-pydantic = "^1.1.1"
+python-dotenv = "^1.0.1"
+asyncio = "^3.4.3"
+pyyaml = "^6.0.2"
+
+
+[tool.poetry.group.dev.dependencies]
+black = "^24.8.0"
+pylint = "^3.3.1"
+isort = "^5.13.2"
+ipykernel = "^6.29.5"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+line-length = 120
+target-version = ['py310']
+
+[tool.pylint.format]
+max-line-length = 120
+expected-line-ending-format = "LF"
+disable = []
+extension-pkg-allow-list = []
+
+[tool.isort]
+multi_line_output = 3
+include_trailing_comma = true
+force_grid_wrap = 0
+use_parentheses = true
+ensure_newline_before_comments = true
+line_length = 120
+split_on_trailing_comma = true
