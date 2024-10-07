@@ -20,7 +20,6 @@ async def insert_services(  # pylint: disable=too-many-arguments
     gdf: gpd.GeoDataFrame,
     service_type_id: int,
     physical_object_type_id: int,
-    territory_id: int,
     parallel_workers: int = 1,
 ) -> list[Service]:
     """Insert GeoDataFrame of services of the same service_type."""
@@ -28,10 +27,8 @@ async def insert_services(  # pylint: disable=too-many-arguments
         ensure_physical_object_and_geometry,
         urban_client=urban_client,
         physical_object_type_id=physical_object_type_id,
-        territory_id=territory_id,
     )
     upload = partial(insert_service, urban_client=urban_client, service_type_id=service_type_id)
-
     part_size = math.ceil(gdf.shape[0] / parallel_workers)
     gdfs = [gdf[i : i + part_size] for i in range(0, gdf.shape[0], part_size)]
     workers = [_insert_services(part, ensure, upload) for part in gdfs]
@@ -48,10 +45,13 @@ async def _insert_services(
     for _, service_series in gdf.iterrows():
         service_data = service_series.dropna().to_dict()
         del service_data["geometry"]
-        physical_object_id, geometry_id = await ensure_func(
-            geometry=service_series["geometry"], name=f"(Physical object for {_get_service_name(service_data)})"
-        )
-
+        try:
+            physical_object_id, geometry_id = await ensure_func(
+                geometry=service_series["geometry"], name=f"(Physical object for {_get_service_name(service_data)})"
+            )
+        except RuntimeError:
+            logger.exception("service has no territory parent. Skipping...")
+            continue
         try:
             inserted_services.append(
                 await upload_func(
@@ -68,7 +68,6 @@ async def ensure_physical_object_and_geometry(
     geometry: shapely.geometry.base.BaseGeometry,
     physical_object_type_id: int,
     name: str,
-    territory_id: int,
 ) -> tuple[int, int]:
     """Check if there are suitable physical object and object geometry objects, create them if none found."""
     objects_around = await urban_client.get_objects_around(geometry, physical_object_type_id)
@@ -76,24 +75,27 @@ async def ensure_physical_object_and_geometry(
         geometry = geometry.buffer(0)
         logger.warning("invalid geometry in file")
     if not all(objects_around["geometry"].is_valid):
-        logger.warning("invalid geometry in gdf")
+        logger.warning("invalid geometry in gdf from UrbanApi")
         objects_around["geometry"] = objects_around["geometry"].buffer(0)
     intersecting = objects_around[
         objects_around.intersects(geometry) | objects_around.contains(geometry) | objects_around.covered_by(geometry)
     ]
     if intersecting.shape[0] == 0:
-        result = await urban_client.upload_physical_object(
-            PostPhysicalObject(
-                geometry=shapely_to_geometry(geometry),
-                territory_id=territory_id,
-                physical_object_type_id=physical_object_type_id,
-                centre_point=None,
-                address=None,
-                name=name,
-                properties={},
+        territory_id = await urban_client.get_common_territory_id(geometry)
+        if territory_id is not None:
+            result = await urban_client.upload_physical_object(
+                PostPhysicalObject(
+                    geometry=shapely_to_geometry(geometry),
+                    territory_id=territory_id,
+                    physical_object_type_id=physical_object_type_id,
+                    centre_point=None,
+                    address=None,
+                    name=name,
+                    properties={},
+                )
             )
-        )
-        return result.physical_object.physical_object_id, result.object_geometry.object_geometry_id
+            return result.physical_object.physical_object_id, result.object_geometry.object_geometry_id
+        raise RuntimeError()
 
     physical_object_id = intersecting.iloc[0]["physical_object_id"]
 

@@ -4,11 +4,13 @@ from pydantic import BaseModel
 
 from pmv2.urban_client.models import PhysicalObjectType, ServiceType
 
+
 class UploadFileConfig(BaseModel):
     """Single file configuration."""
 
     service_type: str
     physical_object_type: str
+    default_capacity: int
 
 
 class UploadConfig(BaseModel):
@@ -26,32 +28,39 @@ class UploadConfig(BaseModel):
         missing_physical_object_types = set(file.physical_object_type for file in self.filenames.values()) - set(
             pot.name for pot in physical_object_types
         )
+        missing_default_capacity = list(filename for filename,data in self.filenames.items() if data.default_capacity == -1)
         errors = []
         if len(missing_service_types) > 0:
             errors.append(f"missing service_types: {', '.join(sorted(missing_service_types))}")
         if len(missing_physical_object_types) > 0:
             errors.append(f"missing physical_object_types: {', '.join(sorted(missing_physical_object_types))}")
+        if len(missing_default_capacity) > 0:
+            errors.append(f"missing some default_capacity: {', '.join(sorted(missing_default_capacity))}")
         if len(errors) > 0:
             raise ValueError("; ".join(errors))
 
         st_mapping = {st.name: st.service_type_id for st in service_types}
         pot_mapping = {pot.name: pot.physical_object_type_id for pot in physical_object_types}
+        dc_mapping = {file.service_type: file.default_capacity for file in self.filenames.values()}
 
         return UploadConfigWithIDs(
             filenames={
                 filename: UploadFileConfigWithIDs(
                     service_type_id=st_mapping[values.service_type],
                     physical_object_type_id=pot_mapping[values.physical_object_type],
+                    default_capacity=dc_mapping[values.service_type],
                 )
                 for filename, values in self.filenames.items()
             }
         )
+
 
 class UploadFileConfigWithIDs(BaseModel):
     """Single file configuration."""
 
     service_type_id: int
     physical_object_type_id: int
+    default_capacity: int
 
 
 class UploadConfigWithIDs(BaseModel):
