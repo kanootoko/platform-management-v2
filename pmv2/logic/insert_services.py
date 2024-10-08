@@ -42,15 +42,14 @@ async def _insert_services(
     upload_func: Callable[..., Awaitable[Service]],
 ) -> list[Service]:
     inserted_services = []
-    for _, service_series in gdf.iterrows():
+    for i, service_series in gdf.iterrows():
         service_data = service_series.dropna().to_dict()
         del service_data["geometry"]
-        try:
-            physical_object_id, geometry_id = await ensure_func(
-                geometry=service_series["geometry"], name=f"(Physical object for {_get_service_name(service_data)})"
-            )
-        except RuntimeError:
-            logger.exception("service has no territory parent. Skipping...")
+        physical_object_id, geometry_id = await ensure_func(
+            geometry=service_series["geometry"], name=f"(Physical object for {_get_service_name(service_data)})"
+        )
+        if (physical_object_id, geometry_id) == (None, None):
+            logger.warning("Service has no territory parent. Skipping...", iteration=i)
             continue
         try:
             inserted_services.append(
@@ -68,7 +67,7 @@ async def ensure_physical_object_and_geometry(
     geometry: shapely.geometry.base.BaseGeometry,
     physical_object_type_id: int,
     name: str,
-) -> tuple[int, int]:
+) -> tuple[int, int] | tuple[None, None]:
     """Check if there are suitable physical object and object geometry objects, create them if none found."""
     objects_around = await urban_client.get_objects_around(geometry, physical_object_type_id)
     if not geometry.is_valid:
@@ -95,7 +94,7 @@ async def ensure_physical_object_and_geometry(
                 )
             )
             return result.physical_object.physical_object_id, result.object_geometry.object_geometry_id
-        raise RuntimeError()
+        return None, None
 
     physical_object_id = intersecting.iloc[0]["physical_object_id"]
 

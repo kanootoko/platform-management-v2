@@ -174,11 +174,11 @@ class HTTPUrbanClient(UrbanClient):
     @_handle_exceptions
     async def get_common_territory_id(self, geom: shapely.geometry.base.BaseGeometry) -> int | None:
         body = shapely.geometry.mapping(geom)
-        clause = ""
+
         await self._logger.adebug("executing get_common_territory", body=body)
 
         async with self._get_session() as session:
-            resp = await session.post(f"/api/v1/common_territory{clause}", json=body)
+            resp = await session.post(f"/api/v1/common_territory", json=body)
             if resp.status != 200:
                 await self._logger.aerror(
                     "error on get_common_territory", resp_code=resp.status, resp_text=await resp.text()

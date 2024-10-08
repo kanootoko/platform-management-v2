@@ -28,7 +28,9 @@ class UploadConfig(BaseModel):
         missing_physical_object_types = set(file.physical_object_type for file in self.filenames.values()) - set(
             pot.name for pot in physical_object_types
         )
-        missing_default_capacity = list(filename for filename,data in self.filenames.items() if data.default_capacity == -1)
+        missing_default_capacity = list(
+            filename for filename, data in self.filenames.items() if data.default_capacity == -1
+        )
         errors = []
         if len(missing_service_types) > 0:
             errors.append(f"missing service_types: {', '.join(sorted(missing_service_types))}")

@@ -73,7 +73,7 @@ def insert_services(  # pylint: disable=too-many-arguments
     Do not check if service already exist. If no geometry is found, insert a new physical object of a given type
     """
     if output_file is None:
-        output_file = f"inserted_{int(time.time())}.pickle"
+        output_file = Path(f"inserted_{int(time.time())}.pickle")
     urban_client = config.urban_client
     gdf: gpd.GeoDataFrame = gpd.read_file(input_file)
     gdf = gdf.drop_duplicates()
@@ -131,7 +131,7 @@ def insert_services_bulk(  # pylint: disable=too-many-arguments
     Do not check if service already exist. If no geometry is found, insert a new building.
     """
     if output_file is None:
-        output_file = f"inserted_{int(time.time())}.pickle"
+        output_file = Path(f"inserted_{int(time.time())}.pickle")
     urban_client = config.urban_client
     logger = config.logger
 
