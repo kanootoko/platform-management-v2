@@ -82,7 +82,9 @@ class HTTPUrbanClient(UrbanClient):
         async with self._get_session() as session:
             resp = await session.post(f"/api/v1/physical_objects/around{clause}", json=body)
             if resp.status != 200:
-                await self._logger.aerror("error on get_objects_around", resp_code=resp.status, resp_text=await resp.text())
+                await self._logger.aerror(
+                    "error on get_objects_around", resp_code=resp.status, resp_text=await resp.text()
+                )
                 raise InvalidStatusCode(f"Unexpected status code on get_objects_around: got {resp.status}")
             df = pd.DataFrame(await resp.json())
             if df.shape[0] == 0:
@@ -124,7 +126,9 @@ class HTTPUrbanClient(UrbanClient):
         async with self._get_session() as session:
             resp = await session.get("/api/v1/service_types")
             if resp.status != 200:
-                await self._logger.aerror("error on get_service_types", resp_code=resp.status, resp_text=await resp.text())
+                await self._logger.aerror(
+                    "error on get_service_types", resp_code=resp.status, resp_text=await resp.text()
+                )
                 raise InvalidStatusCode(f"Unexpected status code on get_service_types: got {resp.status}")
             result = [ServiceType.model_validate(entry) for entry in await resp.json()]
         return result
@@ -166,6 +170,29 @@ class HTTPUrbanClient(UrbanClient):
                 raise InvalidStatusCode(f"Unexpected status code on get_inner_territories: {resp.status}")
             result = Paginated[TerritoryWithoutGeometry].model_validate_json(await resp.text())
             return await result.get_all_pages(session)
+
+    @_handle_exceptions
+    async def get_common_territory_id(self, geom: shapely.geometry.base.BaseGeometry) -> int | None:
+        body = shapely.geometry.mapping(geom)
+
+        await self._logger.adebug("executing get_common_territory", body=body)
+
+        async with self._get_session() as session:
+            resp = await session.post(f"/api/v1/common_territory", json=body)
+            match resp.status:
+                case 200:
+                    result = await resp.json()
+                    return result.get("territory_id")
+                case 404:
+                    return None
+                case _:
+                    await self._logger.aerror(
+                        "error on get_common_territory", resp_code=resp.status, resp_text=await resp.text()
+                    )
+                    raise InvalidStatusCode(f"Unexpected status code on get_common_territory: got {resp.status}")
+
+
+
 
     def _get_session(self) -> ClientSession:
         return ClientSession(self._host, timeout=ClientTimeout(20))

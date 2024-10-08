@@ -17,6 +17,7 @@ async def get_territories(urban_client: UrbanClient, max_level: int) -> list[Ter
     """Get territories list in hierarchy form."""
     return await _get_inner(urban_client, None, max_level)
 
+
 def print_terrirories(territories: list[TerritoryInfo], indent: int = 2) -> None:
     """Print territories list in hierarchy form."""
     for t in territories:

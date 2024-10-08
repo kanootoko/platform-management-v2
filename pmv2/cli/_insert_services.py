@@ -11,6 +11,7 @@ import structlog
 import yaml
 
 from pmv2.logic import insert_services as logic
+from pmv2.logic.insert_services import capacity_dict
 from pmv2.logic.insert_bulk import UploadConfig, UploadFileConfig
 from pmv2.urban_client.models import Service
 
@@ -38,10 +39,10 @@ from ._main import Config, main, pass_config
     help="Indentifier of a physical_object type",
 )
 @click.option(
-    "--territory_id",
-    "-t",
+    "--default-capacity",
+    "-dc",
     type=int,
-    help="Indentifier of a territory",
+    help="Default capacity of service if not in data",
 )
 @click.option(
     "--parallel-workers",
@@ -63,7 +64,7 @@ def insert_services(  # pylint: disable=too-many-arguments
     input_file: Path,
     service_type_id: int,
     physical_object_type_id: int,
-    territory_id: int,
+    default_capacity: int,
     parallel_workers: int,
     output_file: Path | None,
 ):
@@ -71,14 +72,15 @@ def insert_services(  # pylint: disable=too-many-arguments
 
     Do not check if service already exist. If no geometry is found, insert a new physical object of a given type
     """
+    if output_file is None:
+        output_file = Path(f"inserted_{int(time.time())}.pickle")
     urban_client = config.urban_client
     gdf: gpd.GeoDataFrame = gpd.read_file(input_file)
-    gdf = gdf.drop_duplicates()
+    gdf = gdf.drop_duplicates().to_crs(4326)
     print(f"Read file {input_file.name} - {gdf.shape[0]} objects after filtering")
+    capacity_dict.update({service_type_id: default_capacity})
     inserted = asyncio.run(
-        logic.insert_services(
-            urban_client, gdf, service_type_id, physical_object_type_id, territory_id, parallel_workers
-        )
+        logic.insert_services(urban_client, gdf, service_type_id, physical_object_type_id, parallel_workers)
     )
     with open(output_file, "wb") as file:
         pickle.dump(inserted, file)
@@ -101,12 +103,6 @@ def insert_services(  # pylint: disable=too-many-arguments
     help="Path to bulk upload config yaml file",
 )
 @click.option(
-    "--territory_id",
-    "-t",
-    type=int,
-    help="Indentifier of a territory",
-)
-@click.option(
     "--parallel-workers",
     "-w",
     type=int,
@@ -126,7 +122,6 @@ def insert_services_bulk(  # pylint: disable=too-many-arguments
     config: Config,
     input_dir: Path,
     upload_config_file: Path,
-    territory_id: int,
     parallel_workers: int,
     output_file: Path | None,
 ):
@@ -135,7 +130,7 @@ def insert_services_bulk(  # pylint: disable=too-many-arguments
     Do not check if service already exist. If no geometry is found, insert a new building.
     """
     if output_file is None:
-        output_file = f"inserted_{int(time.time())}.pickle"
+        output_file = Path(f"inserted_{int(time.time())}.pickle")
     urban_client = config.urban_client
     logger = config.logger
 
@@ -146,6 +141,7 @@ def insert_services_bulk(  # pylint: disable=too-many-arguments
         upload_config = UploadConfig.model_validate(yaml.safe_load(file)).transform_to_ids(
             service_types, physical_object_types
         )
+    capacity_dict.update({data.service_type_id: data.default_capacity for data in upload_config.filenames.values()})
     logger.info("Prepared upload config", config=upload_config)
     results: dict[str, list[Service]] = {}
     skipped = []
@@ -155,15 +151,13 @@ def insert_services_bulk(  # pylint: disable=too-many-arguments
             continue
         logger.info("Reading file", filename=file.name)
         gdf: gpd.GeoDataFrame = gpd.read_file(file)
-        gdf = gdf.drop_duplicates()
+        gdf = gdf.drop_duplicates().to_crs(4326)
         service_type_id = upload_config.filenames[file.name].service_type_id
         physical_object_type_id = upload_config.filenames[file.name].physical_object_type_id
         logger.info("Read file", filename=file.name, objects=gdf.shape[0])
         structlog.contextvars.bind_contextvars(file=file.name)
         inserted = asyncio.run(
-            logic.insert_services(
-                urban_client, gdf, service_type_id, physical_object_type_id, territory_id, parallel_workers
-            )
+            logic.insert_services(urban_client, gdf, service_type_id, physical_object_type_id, parallel_workers)
         )
         results[file.name] = inserted
     structlog.contextvars.unbind_contextvars("file")
@@ -200,7 +194,7 @@ def prepare_bulk_config(  # pylint: disable=too-many-arguments
     """
     config = UploadConfig(
         filenames={
-            file.name: UploadFileConfig(service_type="___", physical_object_type="___")
+            file.name: UploadFileConfig(service_type="___", physical_object_type="___", default_capacity=-1)
             for file in sorted(input_dir.glob("*.geojson"))
         }
     )

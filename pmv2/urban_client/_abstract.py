@@ -56,3 +56,7 @@ class UrbanClient(abc.ABC):
     @abc.abstractmethod
     async def get_inner_territories(self, territory_id: int | None) -> list[TerritoryWithoutGeometry]:
         """Get a list of territories inside a given territory on the next level. Pass None to get top-level territory"""
+
+    @abc.abstractmethod
+    async def get_common_territory_id(self, geom: shapely.geometry.base.BaseGeometry) -> int | None:
+        """Get the most deep territory id which fully covers given geometry."""
