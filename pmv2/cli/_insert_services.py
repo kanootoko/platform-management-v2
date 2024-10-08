@@ -76,8 +76,7 @@ def insert_services(  # pylint: disable=too-many-arguments
         output_file = Path(f"inserted_{int(time.time())}.pickle")
     urban_client = config.urban_client
     gdf: gpd.GeoDataFrame = gpd.read_file(input_file)
-    gdf = gdf.drop_duplicates()
-    gdf.to_crs(4326, inplace=True)
+    gdf = gdf.drop_duplicates().to_crs(4326)
     print(f"Read file {input_file.name} - {gdf.shape[0]} objects after filtering")
     capacity_dict.update({service_type_id: default_capacity})
     inserted = asyncio.run(
@@ -152,8 +151,7 @@ def insert_services_bulk(  # pylint: disable=too-many-arguments
             continue
         logger.info("Reading file", filename=file.name)
         gdf: gpd.GeoDataFrame = gpd.read_file(file)
-        gdf = gdf.drop_duplicates()
-        gdf.to_crs(4326, inplace=True)
+        gdf = gdf.drop_duplicates().to_crs(4326)
         service_type_id = upload_config.filenames[file.name].service_type_id
         physical_object_type_id = upload_config.filenames[file.name].physical_object_type_id
         logger.info("Read file", filename=file.name, objects=gdf.shape[0])

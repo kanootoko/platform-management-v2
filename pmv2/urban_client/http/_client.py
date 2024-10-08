@@ -179,14 +179,20 @@ class HTTPUrbanClient(UrbanClient):
 
         async with self._get_session() as session:
             resp = await session.post(f"/api/v1/common_territory", json=body)
-            if resp.status != 200:
-                await self._logger.aerror(
-                    "error on get_common_territory", resp_code=resp.status, resp_text=await resp.text()
-                )
-                raise InvalidStatusCode(f"Unexpected status code on get_common_territory: got {resp.status}")
+            match resp.status:
+                case 200:
+                    result = await resp.json()
+                    return result.get("territory_id")
+                case 404:
+                    return None
+                case _:
+                    await self._logger.aerror(
+                        "error on get_common_territory", resp_code=resp.status, resp_text=await resp.text()
+                    )
+                    raise InvalidStatusCode(f"Unexpected status code on get_common_territory: got {resp.status}")
 
-            result = await resp.json()
-            return result.get("territory_id")
+
+
 
     def _get_session(self) -> ClientSession:
         return ClientSession(self._host, timeout=ClientTimeout(20))
