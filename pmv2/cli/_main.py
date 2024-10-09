@@ -1,15 +1,15 @@
 """Click entrypoint is defined here."""
 
 import asyncio
-from dataclasses import dataclass
 import logging
 import os
 import sys
+from dataclasses import dataclass
 from typing import Literal
 
 import click
-from dotenv import load_dotenv
 import structlog
+from dotenv import load_dotenv
 
 from pmv2._version import VERSION
 from pmv2.urban_client import UrbanClient, make_http_client
@@ -62,7 +62,6 @@ def _configure_logging(
         structlog.stdlib.ProcessorFormatter(processor=structlog.dev.ConsoleRenderer(colors=True))
     )
 
-    # file_handler = TimedRotatingFileHandler(filename="./pmv2.log", interval=1, backupCount=48, encoding="utf-8")
     file_handler = logging.FileHandler(filename="./pmv2.log", encoding="utf-8")
     file_handler.setFormatter(structlog.stdlib.ProcessorFormatter(processor=structlog.processors.JSONRenderer()))
 
@@ -92,6 +91,7 @@ def _configure_logging(
     default="DEBUG",
     envvar="LOG_LEVEL",
     show_envvar=True,
+    show_default=True,
     help="Level for logging",
 )
 def main(ctx: click.Context, host: str, log_level):
@@ -100,6 +100,5 @@ def main(ctx: click.Context, host: str, log_level):
 
     urban_client = make_http_client(host, logger)
     if not asyncio.run(urban_client.is_alive()):
-        print(f"Urban API at {host} is unavailable, exiting")
-        sys.exit(1)
+        logger.warning("urban_api unavailable", host=host)
     ctx.obj = Config(urban_client, logger)

@@ -1,6 +1,7 @@
 """insert-services logic is defined here."""
 
 import asyncio
+import itertools
 import math
 from functools import partial
 from typing import Any, Awaitable, Callable
@@ -12,10 +13,10 @@ import structlog
 from pmv2.urban_client import UrbanClient
 from pmv2.urban_client.models import PostPhysicalObject, PostService, Service, shapely_to_geometry
 
-logger: structlog.stdlib.BoundLogger = structlog.get_logger("insert_services")
+logger: structlog.stdlib.BoundLogger = structlog.get_logger("upload_services")
 
 
-async def insert_services(  # pylint: disable=too-many-arguments
+async def upload_services(  # pylint: disable=too-many-arguments
     urban_client: UrbanClient,
     gdf: gpd.GeoDataFrame,
     service_type_id: int,
@@ -28,37 +29,43 @@ async def insert_services(  # pylint: disable=too-many-arguments
         urban_client=urban_client,
         physical_object_type_id=physical_object_type_id,
     )
-    upload = partial(insert_service, urban_client=urban_client, service_type_id=service_type_id)
+    upload = partial(upload_service, urban_client=urban_client, service_type_id=service_type_id)
     part_size = math.ceil(gdf.shape[0] / parallel_workers)
     gdfs = [gdf[i : i + part_size] for i in range(0, gdf.shape[0], part_size)]
-    workers = [_insert_services(part, ensure, upload) for part in gdfs]
-    inserted_services = await asyncio.gather(*workers)
+    workers = [_upload_services(part, ensure, upload) for part in gdfs]
+    inserted_services = list(itertools.chain.from_iterable(await asyncio.gather(*workers)))
     return inserted_services
 
 
-async def _insert_services(
+async def _upload_services(
     gdf: gpd.GeoDataFrame,
     ensure_func: Callable[..., Awaitable[tuple[int, int]]],
     upload_func: Callable[..., Awaitable[Service]],
+    max_errors: int | None = None,
 ) -> list[Service]:
     inserted_services = []
-    for i, service_series in gdf.iterrows():
-        service_data = service_series.dropna().to_dict()
-        del service_data["geometry"]
-        physical_object_id, geometry_id = await ensure_func(
-            geometry=service_series["geometry"], name=f"(Physical object for {_get_service_name(service_data)})"
-        )
-        if (physical_object_id, geometry_id) == (None, None):
-            logger.warning("Service has no territory parent. Skipping...", iteration=i)
-            continue
+    errors = 0
+    for _, service_series in gdf.iterrows():
         try:
+            service_data = service_series.dropna().to_dict()
+            del service_data["geometry"]
+            physical_object_id, geometry_id = await ensure_func(
+                geometry=service_series["geometry"], name=f"(Physical object for {_get_service_name(service_data)})"
+            )
+            if (physical_object_id, geometry_id) == (None, None):
+                logger.warning("Service has no territory parent. Skipping...", service_data=service_data)
+                continue
             inserted_services.append(
                 await upload_func(
                     physical_object_id=physical_object_id, object_geometry_id=geometry_id, service_data=service_data
                 )
             )
         except Exception:  # pylint: disable=broad-except
-            logger.exception("error on service insertion")
+            logger.exception("error on service insertion", service_data=service_data)
+            errors += 1
+            if max_errors is not None and errors >= max_errors:
+                logger.error("Finishing uploading worker because or errors rate", errors=errors)
+                break
     return inserted_services
 
 
@@ -74,7 +81,7 @@ async def ensure_physical_object_and_geometry(
         geometry = geometry.buffer(0)
         logger.warning("invalid geometry in file")
     if not all(objects_around["geometry"].is_valid):
-        logger.warning("invalid geometry in gdf from UrbanApi")
+        logger.warning("invalid geometry in gdf from Urban API")
         objects_around["geometry"] = objects_around["geometry"].buffer(0)
     intersecting = objects_around[
         objects_around.intersects(geometry) | objects_around.contains(geometry) | objects_around.covered_by(geometry)
@@ -106,7 +113,7 @@ async def ensure_physical_object_and_geometry(
     return physical_object_id, geometry_id
 
 
-async def insert_service(
+async def upload_service(
     urban_client: UrbanClient,
     physical_object_id: int,
     object_geometry_id: int,
