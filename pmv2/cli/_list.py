@@ -11,7 +11,15 @@ from pmv2.logic import list_territories as territories_logic
 from ._main import Config, main, pass_config
 
 
-@main.command("list-territories")
+@main.group("list")
+@pass_config
+def list_group(config: Config):
+    """List entities values."""
+    if not asyncio.run(config.urban_client.is_alive()):
+        print("Urban API at is unavailable, exiting")
+
+
+@list_group.command("territories")
 @pass_config
 @click.option(
     "--max-level",
@@ -32,7 +40,7 @@ def list_territories(
     territories_logic.print_terrirories(territories)
 
 
-@main.command("list-service-types")
+@list_group.command("service-types")
 @pass_config
 @click.option(
     "--format",
@@ -72,7 +80,7 @@ def list_service_types(
         print(json.dumps({"service_types": [st.model_dump() for st in service_types]}))
 
 
-@main.command("list-physical-object-types")
+@list_group.command("physical-object-types")
 @pass_config
 @click.option(
     "--format",

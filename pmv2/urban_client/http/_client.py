@@ -1,5 +1,6 @@
 """Urban API HTTP Client is defined here."""
 
+import asyncio
 from functools import wraps
 from typing import Callable
 
@@ -10,7 +11,7 @@ import structlog.stdlib
 from aiohttp import ClientConnectionError, ClientSession, ClientTimeout
 
 from pmv2.urban_client._abstract import UrbanClient
-from pmv2.urban_client.exceptions import APIConnectionError
+from pmv2.urban_client.exceptions import APIConnectionError, APITimeoutError
 from pmv2.urban_client.http.exceptions import InvalidStatusCode
 from pmv2.urban_client.http.models import Paginated
 from pmv2.urban_client.models import (
@@ -30,7 +31,9 @@ def _handle_exceptions(func: Callable) -> Callable:
         try:
             return await func(*args, **kwargs)
         except ClientConnectionError as exc:
-            raise APIConnectionError("Error on connection to UrbanAPI") from exc
+            raise APIConnectionError("Error on connection to Urban API") from exc
+        except asyncio.exceptions.TimeoutError as exc:
+            raise APITimeoutError("Timeout expired on Urban API request") from exc
 
     return _wrapper
 
@@ -51,13 +54,16 @@ class HTTPUrbanClient(UrbanClient):
         """Check if Urban API instance is responding."""
         async with self._get_session() as session:
             try:
-                resp = await session.get("/health_check/ping")
+                resp = await session.get("/health_check/ping", timeout=10)
             except ClientConnectionError as exc:
-                await self._logger.adebug("error on ping", exception=exc)
+                await self._logger.awarning("error on ping", error=repr(exc))
+                return False
+            except asyncio.exceptions.TimeoutError:
+                await self._logger.awarning("timeout on ping")
                 return False
             if resp.status == 200 and (await resp.json()) == {"message": "Pong!"}:
                 return True
-            await self._logger.adebug("error on ping", resp_code=resp.status, resp_text=await resp.text())
+            await self._logger.awarning("error on ping", resp_code=resp.status, resp_text=await resp.text())
         return False
 
     @_handle_exceptions
@@ -78,7 +84,7 @@ class HTTPUrbanClient(UrbanClient):
         await self._logger.adebug("executing get_objects_around", body=body)
         clause = ""
         if physical_object_type_id is not None:
-            clause = f"?physical_object_type_id = {physical_object_type_id}"
+            clause = f"?physical_object_type_id={physical_object_type_id}"
         async with self._get_session() as session:
             resp = await session.post(f"/api/v1/physical_objects/around{clause}", json=body)
             if resp.status != 200:
@@ -178,7 +184,7 @@ class HTTPUrbanClient(UrbanClient):
         await self._logger.adebug("executing get_common_territory", body=body)
 
         async with self._get_session() as session:
-            resp = await session.post(f"/api/v1/common_territory", json=body)
+            resp = await session.post("/api/v1/common_territory", json=body)
             match resp.status:
                 case 200:
                     result = await resp.json()
@@ -190,9 +196,6 @@ class HTTPUrbanClient(UrbanClient):
                         "error on get_common_territory", resp_code=resp.status, resp_text=await resp.text()
                     )
                     raise InvalidStatusCode(f"Unexpected status code on get_common_territory: got {resp.status}")
-
-
-
 
     def _get_session(self) -> ClientSession:
         return ClientSession(self._host, timeout=ClientTimeout(20))
