@@ -7,3 +7,7 @@ class APIError(RuntimeError):
 
 class APIConnectionError(APIError):
     """Could not connect to the API."""
+
+
+class APITimeoutError(APIError, TimeoutError):
+    """Timed out while awaiting response from UrbanAPI."""
