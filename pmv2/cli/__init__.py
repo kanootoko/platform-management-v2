@@ -1,8 +1,7 @@
 """Click configuration is performed here."""
 
+from . import _list, _upload_physical_objects, _upload_services
 from ._main import main
-from . import _list
-from . import _insert_services
 
 __all__ = [
     "main",

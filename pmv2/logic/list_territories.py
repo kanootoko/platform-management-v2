@@ -1,6 +1,7 @@
 """list-territories logic is located here."""
 
 from dataclasses import dataclass, field
+
 from pmv2.urban_client import UrbanClient
 from pmv2.urban_client.models import TerritoryWithoutGeometry
 
