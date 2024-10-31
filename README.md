@@ -46,6 +46,5 @@ Similar to `services`, it allows to upload physical objects with geometry withou
 
 ## Caution
 
-1. At the current state, services insertion does not check if service is already exists, nor it checks availability of physical objects around the given geometry
-2. Geometry is checked only on intersection, without usage of buffering
-3. Authentication is not yet supported
+1. At the current state, services upload does not check if service already exists in the physical object + geometyry, nor it checks availability of physical objects around the given geometry
+2. Authentication is not yet supported
