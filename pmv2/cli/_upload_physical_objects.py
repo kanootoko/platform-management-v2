@@ -1,6 +1,7 @@
-"""Territories listing command is defined here."""
+"""Physical objects uploading commands are defined here."""
 
 import asyncio
+import datetime
 import pickle
 import sys
 import time
@@ -15,6 +16,7 @@ from pmv2.logic import upload_physical_objects as logic
 from pmv2.logic.upload_physical_objects_bulk import UploadConfig
 from pmv2.urban_client.models import Service, UrbanObject
 
+from . import _mappers
 from ._main import Config, main, pass_config
 
 
@@ -51,45 +53,61 @@ def physical_objects_group():
     "--output-pickle",
     "-o",
     "output_file",
-    type=click.Path(dir_okay=False, writable=True, path_type=Path),
-    show_default="inserted_<timestamp>.pickle",
-    help="Output path for inserted physical objects data",
+    type=click.Path(writable=True, path_type=Path),
+    show_default="uploaded_one_<timestamp>.pickle",
+    help="Output path for uploaded physical objects data",
 )
-def upload_file(  # pylint: disable=too-many-arguments
+def upload_file(
     config: Config,
     input_file: Path,
     physical_object_type_id: int,
     parallel_workers: int,
     output_file: Path | None,
 ):
-    """Upload a single geojson of physical objects data.
-
-    Do not check if physical objects already exist. If no geometry is found, insert a new physical object of
-    a given type.
-    """
+    """Upload a single geojson of physical objects data."""
     if output_file is None:
-        output_file = Path(f"inserted_{int(time.time())}.pickle")
-    if not asyncio.run(config.urban_client.is_alive()):
+        output_file = Path(f"uploaded_{int(time.time())}.pickle")
+    if output_file.is_dir():
+        output_file = output_file / f"uploaded_one_{int(time.time())}.pickle"
+    urban_client = config.urban_client
+    if not asyncio.run(urban_client.is_alive()):
         print("Urban API at is unavailable, exiting")
         sys.exit(1)
-    urban_client = config.urban_client
+    results: dict[str, list[Service]] = {
+        "type": "upload_physical_objects",
+        "time_start": datetime.datetime.now(),
+        "input_file": str(input_file.resolve()),
+        "config": {
+            "physical_object_type_id": physical_object_type_id,
+        },
+    }
     gdf: gpd.GeoDataFrame = gpd.read_file(input_file)
     gdf = gdf.drop_duplicates().dropna(subset="geometry").to_crs(4326)
     print(f"Read file {input_file.name} - {gdf.shape[0]} objects after filtering")
+    uploader = logic.PhysicalObjectsUploader(
+        urban_client,
+        po_address_mapper=_mappers.none_mapper,
+        po_name_mapper=_mappers.none_mapper,
+        po_properties_mapper=_mappers.full_dictionary_mapper,
+        logger=config.logger,
+    )
     try:
-        inserted = asyncio.run(
-            logic.upload_physical_objects(urban_client, gdf, physical_object_type_id, parallel_workers)
-        )
+        uploaded = asyncio.run(uploader.upload_physical_objects(gdf, physical_object_type_id, parallel_workers))
     except KeyboardInterrupt:
         config.logger.error("Got interruption signal, impossible to save results")
         raise
-    inserted = [
+
+    uploaded = [
         s.model_dump() if isinstance(s, UrbanObject) else {"physical_object_id": s[0], "geometry_id": s[1]}
-        for s in inserted
+        for s in uploaded
     ]
 
+    results["uploaded"] = uploaded
+    results["metadata"] = {"total": gdf.shape[0], "uploaded": len(uploaded)}
+    config.logger.info("Finished", log_filename=output_file.name)
+    results["time_finish"] = datetime.datetime.now()
     with open(output_file, "wb") as file:
-        pickle.dump(inserted, file)
+        pickle.dump(uploaded, file)
 
 
 @physical_objects_group.command("upload-bulk")
@@ -122,9 +140,9 @@ def upload_file(  # pylint: disable=too-many-arguments
     "--output-pickle",
     "-o",
     "output_file",
-    type=click.Path(dir_okay=False, writable=True, path_type=Path),
-    show_default="inserted_<timestamp>.pickle",
-    help="Output path for inserted physical objects data",
+    type=click.Path(writable=True, path_type=Path),
+    show_default="uploaded_<timestamp>.pickle",
+    help="Output path for uploaded physical objects data",
 )
 def upload_bulk(  # pylint: disable=too-many-arguments,too-many-locals
     config: Config,
@@ -133,12 +151,9 @@ def upload_bulk(  # pylint: disable=too-many-arguments,too-many-locals
     parallel_workers: int,
     output_file: Path | None,
 ):
-    """Execute a bulk upload of geojsons of physical objects data.
-
-    Do not check if physical objects already exist. If no geometry is found, insert a new building.
-    """
+    """Execute a bulk upload of geojsons of physical objects data."""
     if output_file is None:
-        output_file = Path(f"inserted_{int(time.time())}.pickle")
+        output_file = Path(f"uploaded_{int(time.time())}.pickle")
     if not asyncio.run(config.urban_client.is_alive()):
         print("Urban API at is unavailable, exiting")
         sys.exit(1)
@@ -150,7 +165,14 @@ def upload_bulk(  # pylint: disable=too-many-arguments,too-many-locals
     with upload_config_file.open(encoding="utf-8") as file:
         upload_config = UploadConfig.model_validate(yaml.safe_load(file)).transform_to_ids(physical_object_types)
     logger.info("Prepared upload config", config=upload_config)
-    results: dict[str, list[Service]] = {}
+    results: dict[str, list[Service]] = {
+        "type": "upload_physical_objects_bulk",
+        "date": datetime.datetime.now(),
+        "input_dir": str(input_dir.resolve()),
+        "config": upload_config.model_dump(),
+        "uploaded": {},
+        "metadata": {},
+    }
     skipped = []
     for file in sorted(input_dir.glob("*.geojson")):
         if file.name not in upload_config.filenames:
@@ -160,24 +182,40 @@ def upload_bulk(  # pylint: disable=too-many-arguments,too-many-locals
         gdf: gpd.GeoDataFrame = gpd.read_file(file)
         gdf = gdf.drop_duplicates().dropna(subset="geometry").to_crs(4326)
         physical_object_type_id = upload_config.filenames[file.name]
-        logger.info("Read file", filename=file.name, objects=gdf.shape[0])
         structlog.contextvars.bind_contextvars(file=file.name)
+        logger.info("Read file", objects=gdf.shape[0])
+        if gdf.shape[0] == 0:
+            logger.warning("Empty geojson file, skipping")
+            continue
+        uploader = logic.PhysicalObjectsUploader(
+            urban_client,
+            po_address_mapper=_mappers.none_mapper,
+            po_name_mapper=_mappers.none_mapper,
+            po_properties_mapper=_mappers.full_dictionary_mapper,
+            logger=config.logger,
+        )
         try:
-            uploaded = asyncio.run(
-                logic.upload_physical_objects(urban_client, gdf, physical_object_type_id, parallel_workers)
-            )
+            uploaded = asyncio.run(uploader.upload_physical_objects(gdf, physical_object_type_id, parallel_workers))
         except KeyboardInterrupt:
-            logger.error("Got interruption signal, impossible to save results")
-            raise
-        results[file.name] = [
+            logger.error("Got interruption signal, impossible to save part of results")
+            break
+        except Exception:  # pylint: disable=broad-except
+            logger.exception("Got exception on processing file, ignoring")
+            continue
+        results["uploaded"][file.name] = [
             s.model_dump() if isinstance(s, UrbanObject) else {"physical_object_id": s[0], "geometry_id": s[1]}
             for s in uploaded
         ]
+        results["metadata"][file.name] = {
+            "total": gdf.shape[0],
+            "uploaded": len(uploaded),
+        }
     structlog.contextvars.unbind_contextvars("file")
 
     if len(skipped) > 0:
         logger.warning("Skipped some files", filenames=skipped)
-    logger.info("Finished")
+    logger.info("Finished", log_filename=output_file.name)
+    results["time_finish"] = datetime.datetime.now()
     with open(output_file, "wb") as file:
         pickle.dump(results, file)
 

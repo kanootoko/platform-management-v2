@@ -27,10 +27,19 @@ class Config:
 
 pass_config = click.make_pass_decorator(Config)
 
+_LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 
-def _configure_logging(
-    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
-) -> structlog.stdlib.BoundLogger:
+
+def _configure_logging(log_level: _LogLevel, files: dict[str, _LogLevel] | None = None) -> structlog.stdlib.BoundLogger:
+    level_name_mapping = {
+        "DEBUG": logging.DEBUG,
+        "INFO": logging.INFO,
+        "WARNING": logging.WARNING,
+        "ERROR": logging.ERROR,
+        "CRITICAL": logging.CRITICAL,
+    }
+    if files is None:
+        files = {}
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,
@@ -47,27 +56,21 @@ def _configure_logging(
     )
 
     logger: structlog.stdlib.BoundLogger = structlog.get_logger()
-    logger.setLevel(
-        {
-            "DEBUG": logging.DEBUG,
-            "INFO": logging.INFO,
-            "WARNING": logging.WARNING,
-            "ERROR": logging.ERROR,
-            "CRITICAL": logging.CRITICAL,
-        }[log_level]
-    )
+    logger.setLevel(level_name_mapping[log_level])
 
     console_handler = logging.StreamHandler(sys.stderr)
     console_handler.setFormatter(
         structlog.stdlib.ProcessorFormatter(processor=structlog.dev.ConsoleRenderer(colors=True))
     )
 
-    file_handler = logging.FileHandler(filename="./pmv2.log", encoding="utf-8")
-    file_handler.setFormatter(structlog.stdlib.ProcessorFormatter(processor=structlog.processors.JSONRenderer()))
-
     root_logger = logging.getLogger()
     root_logger.addHandler(console_handler)
-    root_logger.addHandler(file_handler)
+
+    for filename, level in files.items():
+        file_handler = logging.FileHandler(filename=filename, encoding="utf-8")
+        file_handler.setFormatter(structlog.stdlib.ProcessorFormatter(processor=structlog.processors.JSONRenderer()))
+        file_handler.setLevel(level_name_mapping[level])
+        root_logger.addHandler(file_handler)
 
     root_logger.setLevel("INFO")
 
@@ -96,7 +99,7 @@ def _configure_logging(
 )
 def main(ctx: click.Context, host: str, log_level):
     """Platform manipulation command line script."""
-    logger = _configure_logging(log_level)
+    logger = _configure_logging(log_level, {"./pmv2.log": "DEBUG"})
 
     urban_client = make_http_client(host, logger)
     if not asyncio.run(urban_client.is_alive()):

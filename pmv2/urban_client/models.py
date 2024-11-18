@@ -20,6 +20,8 @@ def shapely_to_geometry(geom: shapely.geometry.base.BaseGeometry) -> Geometry:
         cls = gjp.MultiPolygon
     if isinstance(geom, shapely.LineString):
         cls = gjp.LineString
+    if isinstance(geom, shapely.MultiLineString):
+        cls = gjp.MultiLineString
     if isinstance(geom, shapely.MultiPoint):
         cls = gjp.MultiPoint
     if isinstance(geom, shapely.GeometryCollection):
@@ -65,6 +67,15 @@ class PhysicalObject(BaseModel):
     properties: dict[str, Any]
     created_at: datetime.datetime
     updated_at: datetime.datetime
+
+
+class LivingBuilding(BaseModel):
+    """Living building additional to physical object of corresponding type."""
+    living_building_id: int
+    physical_object: PhysicalObject
+    residents_number: int | None = None
+    living_area: float | None
+    properties: dict[str, Any]
 
 
 class ObjectGeometry(BaseModel):

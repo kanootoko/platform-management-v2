@@ -1,4 +1,4 @@
-"""Part of insert-services-bulk logic is located here."""
+"""Part of bulk services upload logic is located here."""
 
 from pydantic import BaseModel
 

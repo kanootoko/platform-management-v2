@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "platform-management-v2"
-version = "0.3.0"
+version = "0.4.0"
 description = "Temporary utility for data manipulation of IDU Digital City Platform"
 authors = ["Aleksei Sokol <kanootoko@gmail.com>"]
 license = "MIT"
@@ -23,6 +23,7 @@ geojson-pydantic = "^1.1.1"
 python-dotenv = "^1.0.1"
 asyncio = "^3.4.3"
 pyyaml = "^6.0.2"
+pyproj = "^3.7.0"
 
 
 [tool.poetry.group.dev.dependencies]

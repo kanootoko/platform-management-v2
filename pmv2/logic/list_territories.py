@@ -1,4 +1,4 @@
-"""list-territories logic is located here."""
+"""Territories listing logic is located here."""
 
 from dataclasses import dataclass, field
 

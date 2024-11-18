@@ -2,7 +2,7 @@
 
 import asyncio
 from functools import wraps
-from typing import Callable
+from typing import Any, Callable
 
 import geopandas as gpd
 import pandas as pd
@@ -15,6 +15,7 @@ from pmv2.urban_client.exceptions import APIConnectionError, APITimeoutError
 from pmv2.urban_client.http.exceptions import InvalidStatusCode
 from pmv2.urban_client.http.models import Paginated
 from pmv2.urban_client.models import (
+    LivingBuilding,
     PhysicalObjectType,
     PostPhysicalObject,
     PostService,
@@ -81,12 +82,13 @@ class HTTPUrbanClient(UrbanClient):
     ) -> gpd.GeoDataFrame:
         """Get physical objects around given geometry from Urban API."""
         body = shapely.geometry.mapping(geom)
-        await self._logger.adebug("executing get_objects_around", body=body)
         clause = ""
         if physical_object_type_id is not None:
             clause = f"?physical_object_type_id={physical_object_type_id}"
+        uri = f"/api/v1/physical_objects/around{clause}"
+        await self._logger.adebug("executing get_objects_around", body=body, uri=uri)
         async with self._get_session() as session:
-            resp = await session.post(f"/api/v1/physical_objects/around{clause}", json=body)
+            resp = await session.post(uri, json=body)
             if resp.status != 200:
                 await self._logger.aerror(
                     "error on get_objects_around", resp_code=resp.status, resp_text=await resp.text()
@@ -98,6 +100,39 @@ class HTTPUrbanClient(UrbanClient):
             df["geometry"] = df["geometry"].apply(shapely.geometry.shape)
             gdf = gpd.GeoDataFrame(df, geometry="geometry", crs=4326)
         return gdf
+
+    @_handle_exceptions
+    async def get_urban_object(
+        self, physical_object_id: int, object_geometry_id: int, service_id: int | None
+    ) -> UrbanObject | None:
+        path = f"/api/v1/urban_objects_by_physical_object?physical_object_id={physical_object_id}"
+        await self._logger.adebug("executing get_urban_object", path=path)
+        async with self._get_session() as session:
+            resp = await session.get(path)
+            if resp.status == 404:
+                return None
+            if resp.status != 200:
+                await self._logger.aerror(
+                    "error on get_physical_object_geometries", resp_code=resp.status, resp_text=await resp.text()
+                )
+                raise InvalidStatusCode(f"Unexpected status code on get_physical_object_geometries: got {resp.status}")
+            urban_objects = [UrbanObject.model_validate(entry) for entry in await resp.json()]
+        potential: UrbanObject | None = None
+        for ub in urban_objects:
+            if (
+                ub.physical_object.physical_object_id == physical_object_id
+                and ub.object_geometry.object_geometry_id == object_geometry_id
+            ):
+                if service_id is None:
+                    if ub.service is None:
+                        return ub
+                    potential = ub
+                elif ub.service is not None and ub.service.service_id == service_id:
+                    return ub
+        if potential is not None:
+            potential.service = None
+            return potential
+        return None
 
     @_handle_exceptions
     async def get_physical_object_geometries(self, physical_object_id: int) -> gpd.GeoDataFrame:
@@ -151,6 +186,27 @@ class HTTPUrbanClient(UrbanClient):
                 )
                 raise InvalidStatusCode(f"Unexpected status code on upload_physical_object: got {resp.status}")
             result = UrbanObject.model_validate_json(await resp.text())
+        return result
+
+    @_handle_exceptions
+    async def add_living_building(
+        self, physical_object_id: int, residents_number: int, living_area: float, properties: dict[str, Any]
+    ) -> LivingBuilding:
+        body = {
+            "physical_object_id": physical_object_id,
+            "residents_number": residents_number,
+            "living_area": living_area,
+            "properties": properties,
+        }
+        await self._logger.adebug("executing add_living_building", body=body)
+        async with self._get_session() as session:
+            resp = await session.post("/api/v1/living_buildings", json=body)
+            if resp.status != 201:
+                await self._logger.aerror(
+                    "error on add_living_building", resp_code=resp.status, resp_text=await resp.text()
+                )
+                raise InvalidStatusCode(f"Unexpected status code on add_living_building: {resp.status}")
+            result = LivingBuilding.model_validate_json(await resp.text())
         return result
 
     @_handle_exceptions
