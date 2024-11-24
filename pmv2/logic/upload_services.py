@@ -6,6 +6,7 @@ import math
 from typing import Any, Awaitable, Callable
 
 import geopandas as gpd
+import pandas as pd
 import shapely
 import structlog
 
@@ -43,7 +44,7 @@ class ServicesUploader:
         service_type_id: int,
         physical_object_type_id: int,
         parallel_workers: int = 1,
-    ) -> list[Service]:
+    ) -> tuple[list[Service], gpd.GeoDataFrame | None]:
         """Upload GeoDataFrame of services of the same service_type."""
         counter = 0
 
@@ -67,8 +68,16 @@ class ServicesUploader:
             )
             for part in gdfs
         ]
-        uploaded_services = list(itertools.chain.from_iterable(await asyncio.gather(*workers)))
-        return uploaded_services
+
+        results = await asyncio.gather(*workers)
+        uploaded_services = list(itertools.chain.from_iterable(t[0] for t in results))
+        error_gdfs = [t[1] for t in results if t[1] is not None]
+        if len(error_gdfs) > 0:
+            errors = pd.concat(error_gdfs)
+        else:
+            errors = None
+        await self._logger.ainfo("Finished services uploading", total=gdf.shape[0], successful=len(uploaded_services))
+        return uploaded_services, errors
 
     async def upload_service(
         self,
@@ -109,12 +118,12 @@ class ServicesUploader:
         service_type_id: int,
         upload_service: Awaitable[Callable[[dict[str, Any], int, int, int], Service]] = ...,
         max_errors: int | None = None,
-    ) -> list[Service]:
+    ) -> tuple[list[Service], gpd.GeoDataFrame | None]:
         uploaded_services = []
         if upload_service is ...:
             upload_service = self.upload_service
-        errors = 0
-        for _, service_series in gdf.iterrows():
+        errors = []
+        for idx, service_series in gdf.iterrows():
             try:
                 full_data = service_series.dropna().to_dict()
                 geometry: shapely.geometry.base.BaseGeometry = full_data.pop("geometry")
@@ -137,8 +146,9 @@ class ServicesUploader:
                 )
             except Exception:  # pylint: disable=broad-except
                 await self._logger.aexception("error on service upload", service_data=full_data)
-                errors += 1
-                if max_errors is not None and errors >= max_errors:
-                    await self._logger.aerror("Finishing uploading worker because or errors rate", errors=errors)
+                errors.append(idx)
+                if max_errors is not None and len(errors) >= max_errors:
+                    await self._logger.aerror("Finishing uploading worker because or errors rate", errors=len(errors))
                     break
-        return uploaded_services
+        errors_gdf = gdf.loc[errors] if len(errors) > 0 else None
+        return uploaded_services, errors_gdf

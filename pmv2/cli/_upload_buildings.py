@@ -128,12 +128,19 @@ def upload_file(  # pylint: disable=too-many-locals
         logger=logger,
     )
     try:
-        uploaded = asyncio.run(uploader.upload_buildings(gdf, physical_object_type_mapper, parallel_workers))
+        uploaded, errors = asyncio.run(
+            uploader.upload_buildings(
+                gdf,
+                physical_object_type_mapper=physical_object_type_mapper,
+                parallel_workers=parallel_workers,
+            )
+        )
     except KeyboardInterrupt:
         config.logger.error("Got interruption signal, impossible to save results")
         sys.exit(1)
 
     results["uploaded"] = [u.model_dump() for u in uploaded]
+    results["errors"] = errors.to_geo_dict() if errors is not None else None
     results["metadata"] = {"total": gdf.shape[0], "uploaded": len(uploaded)}
     config.logger.info("Finished", log_filename=output_file.name)
     results["time_finish"] = datetime.datetime.now()

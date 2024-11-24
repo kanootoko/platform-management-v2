@@ -93,12 +93,13 @@ def upload_file(
         logger=config.logger,
     )
     try:
-        uploaded = asyncio.run(uploader.upload_physical_objects(gdf, physical_object_type_id, parallel_workers))
+        uploaded, errors = asyncio.run(uploader.upload_physical_objects(gdf, physical_object_type_id, parallel_workers))
     except KeyboardInterrupt:
         config.logger.error("Got interruption signal, impossible to save results")
         raise
 
     results["uploaded"] = [u.model_dump() for u in uploaded]
+    results["errors"] = errors.to_geo_dict() if errors is not None else None
     results["metadata"] = {"total": gdf.shape[0], "uploaded": len(uploaded)}
     config.logger.info("Finished", log_filename=output_file.name)
     results["time_finish"] = datetime.datetime.now()
@@ -169,6 +170,8 @@ def upload_bulk(  # pylint: disable=too-many-arguments,too-many-locals
         "input_dir": str(input_dir.resolve()),
         "config": upload_config.model_dump(),
         "uploaded": {},
+        "errors": {},
+        "skipped": [],
         "metadata": {},
     }
     skipped = []
@@ -193,14 +196,20 @@ def upload_bulk(  # pylint: disable=too-many-arguments,too-many-locals
             logger=config.logger,
         )
         try:
-            uploaded = asyncio.run(uploader.upload_physical_objects(gdf, physical_object_type_id, parallel_workers))
+            uploaded, errors = asyncio.run(
+                uploader.upload_physical_objects(gdf, physical_object_type_id, parallel_workers)
+            )
         except KeyboardInterrupt:
             logger.error("Got interruption signal, impossible to save part of results")
             break
         except Exception:  # pylint: disable=broad-except
             logger.exception("Got exception on processing file, ignoring")
+            results["skipped"].append(file.name)
             continue
+
         results["uploaded"][file.name] = [s.model_dump() for s in uploaded]
+        if errors is not None:
+            results["errors"][file.name] = errors.to_geo_dict()
         results["metadata"][file.name] = {
             "total": gdf.shape[0],
             "uploaded": len(uploaded),

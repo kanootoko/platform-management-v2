@@ -6,6 +6,7 @@ import math
 from typing import Any, Awaitable, Callable
 
 import geopandas as gpd
+import pandas as pd
 import shapely
 import structlog
 
@@ -34,7 +35,7 @@ class FunctionalZonesUploader:
         gdf: gpd.GeoDataFrame,
         functional_zone_type_mapper: Callable[[dict[str, Any]], int],
         parallel_workers: int = 1,
-    ) -> list[FunctionalZone]:
+    ) -> tuple[list[FunctionalZone], gpd.GeoDataFrame | None]:
         """Upload GeoDataFrame of functional_zones with existing checking."""
         counter = 0
 
@@ -55,11 +56,18 @@ class FunctionalZonesUploader:
             )
             for part in gdfs
         ]
-        uploaded_functional_zones = list(itertools.chain.from_iterable(await asyncio.gather(*workers)))
+
+        results = await asyncio.gather(*workers)
+        uploaded_functional_zones = list(itertools.chain.from_iterable(t[0] for t in results))
+        error_gdfs = [t[1] for t in results if t[1] is not None]
+        if len(error_gdfs) > 0:
+            errors = pd.concat(error_gdfs)
+        else:
+            errors = None
         await self._logger.ainfo(
             "Finished functional_zones upload", total=gdf.shape[0], successful=len(uploaded_functional_zones)
         )
-        return uploaded_functional_zones
+        return uploaded_functional_zones, errors
 
     async def upload_functional_zone(self, data: dict[str, Any], functional_zone_type_id: int) -> FunctionalZone | None:
         """Upload a single functional_zone of a given type."""
@@ -109,12 +117,12 @@ class FunctionalZonesUploader:
         functional_zone_type_mapper: Callable[[dict[str, Any]], tuple[int, bool | None]],
         upload_functional_zone: Awaitable[Callable[[dict[str, Any], int], FunctionalZone | None]] = ...,
         max_errors: int | None = None,
-    ) -> list[FunctionalZone]:
+    ) -> tuple[list[FunctionalZone], gpd.GeoDataFrame | None]:
         if upload_functional_zone is ...:
             upload_functional_zone = self.upload_functional_zone
         uploaded_functional_zones = []
-        errors = 0
-        for _, data_series in gdf.iterrows():
+        errors = []
+        for idx, data_series in gdf.iterrows():
             try:
                 full_data = data_series.dropna().to_dict()
                 functional_zone_type_id = functional_zone_type_mapper(full_data)
@@ -123,13 +131,12 @@ class FunctionalZonesUploader:
                     uploaded_functional_zones.append(uploaded)
             except Exception:  # pylint: disable=broad-except
                 self._logger.exception("Error on functional zone upload", physical_object_data=full_data)
-                errors += 1
-                if max_errors is not None and errors >= max_errors:
-                    self._logger.error("Finishing uploading worker because or errors rate", errors=errors)
+                errors.append(idx)
+                if max_errors is not None and len(errors) >= max_errors:
+                    self._logger.error("Finishing uploading worker because or errors rate", errors=len(errors))
                     break
             except KeyboardInterrupt:
                 await self._logger.awarning("Got interruption signal, finising")
                 break
-            finally:
-                await asyncio.sleep(1)
-        return uploaded_functional_zones
+        errors_gdf = gdf.loc[errors] if len(errors) > 0 else None
+        return uploaded_functional_zones, errors_gdf

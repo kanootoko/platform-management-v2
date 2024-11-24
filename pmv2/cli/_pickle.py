@@ -18,7 +18,7 @@ def pickles_group():
 @pickles_group.command("preview")
 @click.argument("pickle_file", type=click.Path(dir_okay=False, path_type=Path))
 @click.option(
-    "--max_level",
+    "--max-level",
     "-l",
     envvar="MAX_LEVEL",
     type=int,
@@ -28,7 +28,7 @@ def pickles_group():
     help="Max level to print values recursively",
 )
 @click.option(
-    "--array_elements",
+    "--array-elements",
     envvar="ARRAY_ELEMENTS",
     type=int,
     default=2,
@@ -37,7 +37,7 @@ def pickles_group():
     help="Number of array elements to print",
 )
 @click.option(
-    "--dict_elements",
+    "--dict-elements",
     envvar="DICT_ELEMENTS",
     type=int,
     default=5,

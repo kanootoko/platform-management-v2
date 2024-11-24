@@ -6,6 +6,7 @@ import math
 from typing import Any, Awaitable, Callable
 
 import geopandas as gpd
+import pandas as pd
 import shapely
 import structlog
 
@@ -51,7 +52,7 @@ class BuildingsUploader:
         gdf: gpd.GeoDataFrame,
         physical_object_type_mapper: Callable[[dict[str, Any]], tuple[int, bool | None]],
         parallel_workers: int = 1,
-    ) -> list[UrbanObject]:
+    ) -> tuple[list[UrbanObject], gpd.GeoDataFrame | None]:
         """Upload GeoDataFrame of buildings with physical object type decided by mapper function."""
         counter = 0
 
@@ -70,9 +71,16 @@ class BuildingsUploader:
             self._upload_buildings_batch(part, physical_object_type_mapper, logging_wrapper(self.upload_building))
             for part in gdfs
         ]
-        uploaded_buildings = list(itertools.chain.from_iterable(await asyncio.gather(*workers)))
+
+        results = await asyncio.gather(*workers)
+        uploaded_buildings = list(itertools.chain.from_iterable(t[0] for t in results))
+        error_gdfs = [t[1] for t in results if t[1] is not None]
+        if len(error_gdfs) > 0:
+            errors = pd.concat(error_gdfs)
+        else:
+            errors = None
         await self._logger.ainfo("Finished buildings upload", total=gdf.shape[0], successful=len(uploaded_buildings))
-        return uploaded_buildings
+        return uploaded_buildings, errors
 
     async def upload_building(self, full_data: dict[str, Any], physical_object_type_id: int, is_living: bool):
         """Upload a single building of a given physical_object_type and livinglesness."""
@@ -115,12 +123,12 @@ class BuildingsUploader:
         physical_object_type_mapper: Callable[[dict[str, Any]], tuple[int, bool | None]],
         upload_building: Awaitable[Callable[[dict[str, Any], int, bool], UrbanObject | None]] = ...,
         max_errors: int | None = None,
-    ) -> list[UrbanObject]:
+    ) -> tuple[list[UrbanObject], gpd.GeoDataFrame | None]:
         if upload_building is ...:
             upload_building = self.upload_building
         uploaded_buildings = []
-        errors = 0
-        for _, data_series in gdf.iterrows():
+        errors = []
+        for idx, data_series in gdf.iterrows():
             try:
                 full_data = data_series.dropna().to_dict()
                 physical_object_type_id, is_living = physical_object_type_mapper(full_data)
@@ -129,11 +137,12 @@ class BuildingsUploader:
                     uploaded_buildings.append(uploaded)
             except Exception:  # pylint: disable=broad-except
                 self._logger.exception("Error on building upload", physical_object_data=full_data)
-                errors += 1
-                if max_errors is not None and errors >= max_errors:
-                    self._logger.error("Finishing uploading worker because or errors rate", errors=errors)
+                errors.append(idx)
+                if max_errors is not None and len(errors) >= max_errors:
+                    self._logger.error("Finishing uploading worker because or errors rate", errors=len(errors))
                     break
             except KeyboardInterrupt:
                 await self._logger.awarning("Got interruption signal, finising")
                 break
-        return uploaded_buildings
+        errors_gdf = gdf.loc[errors] if len(errors) > 0 else None
+        return uploaded_buildings, errors_gdf

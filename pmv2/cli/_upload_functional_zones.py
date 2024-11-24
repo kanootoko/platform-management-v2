@@ -10,6 +10,7 @@ from typing import Any, Callable
 
 import click
 import geopandas as gpd
+import structlog
 import yaml
 
 from pmv2.logic.upload_functional_zones import FunctionalZonesUploader
@@ -139,7 +140,7 @@ def upload_file(  # pylint: disable=too-many-arguments,too-many-locals
         logger=config.logger,
     )
     try:
-        uploaded = asyncio.run(
+        uploaded, errors = asyncio.run(
             uploader.upload_functional_zones(
                 gdf,
                 functional_zone_type_mapper=lambda d: fz_types[map_fzt_name(d.pop(functional_zone_type_field, None))],
@@ -151,6 +152,7 @@ def upload_file(  # pylint: disable=too-many-arguments,too-many-locals
         sys.exit(1)
 
     results["uploaded"] = [u.model_dump() for u in uploaded]
+    results["errors"] = errors.to_geo_dict() if errors is not None else None
     results["metadata"] = {"total": gdf.shape[0], "uploaded": len(uploaded)}
     config.logger.info("Finished", log_filename=output_file.name)
     results["time_finish"] = datetime.datetime.now()
@@ -225,10 +227,11 @@ def upload_bulk(  # pylint: disable=too-many-arguments,too-many-locals
     Do not check if service already exist. If no geometry is found, upload a new physical object of a given type.
     """
     if output_file is None:
-        output_file = Path(f"uploaded_one_{int(time.time())}.pickle")
+        output_file = Path(f"uploaded_{int(time.time())}.pickle")
     if output_file.is_dir():
         output_file = output_file / f"uploaded_one_{int(time.time())}.pickle"
     urban_client = config.urban_client
+    logger = config.logger
     if not asyncio.run(urban_client.is_alive()):
         print("Urban API at is unavailable, exiting")
         sys.exit(1)
@@ -253,10 +256,20 @@ def upload_bulk(  # pylint: disable=too-many-arguments,too-many-locals
             "source": source,
         },
         "uploaded": {},
+        "errors": {},
+        "skipped": [],
         "metadata": {},
     }
 
+    uploader = FunctionalZonesUploader(
+        urban_client,
+        properties_mapper=_get_additionals_properties_mapper({"year": year, "source": source}),
+        logger=logger,
+    )
+
     for file in sorted(input_dir.glob("*.geojson")):
+        structlog.contextvars.bind_contextvars(file=file.name)
+        logger.info("Reading file")
         gdf: gpd.GeoDataFrame = gpd.read_file(file)
         gdf = gdf.drop_duplicates().dropna(subset="geometry").to_crs(4326)
         print(f"Read file {file.name} - {gdf.shape[0]} objects after filtering")
@@ -266,18 +279,15 @@ def upload_bulk(  # pylint: disable=too-many-arguments,too-many-locals
             sys.exit(1)
         fzt_file = set(map(map_fzt_name, gdf[functional_zone_type_field]))
         if len(fzt_file - set(fz_types)) > 0:
-            print(
-                "Following functional_zone_type values cannot be mapped:", ", ".join(sorted(fzt_file - set(fz_types)))
+            logger.error(
+                "Some functional_zone_type values cannot be mapped skipping file",
+                functional_zones=sorted(fzt_file - set(fz_types)),
             )
-            sys.exit(1)
+            results["skipped"].append(file.name)
+            continue
 
-        uploader = FunctionalZonesUploader(
-            urban_client,
-            properties_mapper=_get_additionals_properties_mapper({"year": year, "source": source}),
-            logger=config.logger,
-        )
         try:
-            uploaded = asyncio.run(
+            uploaded, errors = asyncio.run(
                 uploader.upload_functional_zones(
                     gdf,
                     functional_zone_type_mapper=lambda d: fz_types[
@@ -287,12 +297,20 @@ def upload_bulk(  # pylint: disable=too-many-arguments,too-many-locals
                 )
             )
         except KeyboardInterrupt:
-            config.logger.error("Got interruption signal, impossible to save results")
-            sys.exit(1)
+            logger.error("Got interruption signal, impossible to save part of results")
+            break
+        except Exception:  # pylint: disable=broad-except
+            results["skipped"].append(file.name)
+            logger.exception("Got exception on processing file, ignoring")
+            continue
 
         results["uploaded"][file.name] = [u.model_dump() for u in uploaded]
+        if errors is not None:
+            results["errors"][file.name] = errors.to_geo_dict()
         results["metadata"][file.name] = {"total": gdf.shape[0], "uploaded": len(uploaded)}
-    config.logger.info("Finished", log_filename=output_file.name)
+    structlog.contextvars.unbind_contextvars("file")
+
+    logger.info("Finished", log_filename=output_file.name)
     results["time_finish"] = datetime.datetime.now()
     with open(output_file, "wb") as file:
         pickle.dump(results, file)

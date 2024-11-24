@@ -7,6 +7,7 @@ from functools import partial
 from typing import Any, Awaitable, Callable
 
 import geopandas as gpd
+import pandas as pd
 import pyproj
 import shapely
 import shapely.ops
@@ -44,8 +45,11 @@ class PhysicalObjectsUploader:
         gdf: gpd.GeoDataFrame,
         physical_object_type_id: int,
         parallel_workers: int = 1,
-    ) -> list[UrbanObject]:
-        """Upload GeoDataFrame of physical objects of the same physical_object_type."""
+    ) -> tuple[list[UrbanObject], gpd.GeoDataFrame | None]:
+        """Upload GeoDataFrame of physical objects of the same physical_object_type.
+
+        Return uploaded urban objects and GeoDataFrame with errors
+        """
         counter = 0
 
         def logging_wrapper(func: Awaitable[Callable[..., Any]]):
@@ -64,21 +68,28 @@ class PhysicalObjectsUploader:
         part_size = math.ceil(gdf.shape[0] / parallel_workers)
         gdfs = [gdf.iloc[i : i + part_size] for i in range(0, gdf.shape[0], part_size)]
         workers = [self._upload_physical_objects_batch(part, upload_func) for part in gdfs]
-        uploaded_physical_objects = list(itertools.chain.from_iterable(await asyncio.gather(*workers)))
+
+        results = await asyncio.gather(*workers)
+        uploaded_physical_objects = list(itertools.chain.from_iterable(t[0] for t in results))
+        error_gdfs = [t[1] for t in results if t[1] is not None]
+        if len(error_gdfs) > 0:
+            errors = pd.concat(error_gdfs)
+        else:
+            errors = None
         await self._logger.ainfo(
             "Finished buildings uploading", total=gdf.shape[0], successful=len(uploaded_physical_objects)
         )
-        return uploaded_physical_objects
+        return uploaded_physical_objects, errors
 
     async def _upload_physical_objects_batch(
         self,
         gdf: gpd.GeoDataFrame,
         upload_physical_object: Callable[..., Awaitable[UrbanObject | None]],
         max_errors: int | None = None,
-    ) -> list[UrbanObject]:
+    ) -> tuple[list[UrbanObject], gpd.GeoDataFrame | None]:
         uploaded_pos = []
-        errors = 0
-        for _, po_series in gdf.iterrows():
+        errors = []
+        for idx, po_series in gdf.iterrows():
             try:
                 po_data = po_series.dropna().to_dict()
                 del po_data["geometry"]
@@ -91,14 +102,15 @@ class PhysicalObjectsUploader:
                 uploaded_pos.append(result)
             except Exception:  # pylint: disable=broad-except
                 self._logger.exception("Error on physical object upload", physical_object_data=po_data)
-                errors += 1
-                if max_errors is not None and errors >= max_errors:
-                    self._logger.error("Finishing uploading worker because or errors rate", errors=errors)
+                errors.append(idx)
+                if max_errors is not None and len(errors) >= max_errors:
+                    self._logger.error("Finishing uploading worker because or errors rate", errors=len(errors))
                     break
             except KeyboardInterrupt:
                 await self._logger.awarning("Got interruption signal, finising")
                 break
-        return uploaded_pos
+        errors_gdf = gdf.loc[errors] if len(errors) > 0 else None
+        return uploaded_pos, errors_gdf
 
     async def upload_physical_object_if_not_exists(  # pylint: disable=too-many-locals
         self,

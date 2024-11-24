@@ -76,8 +76,8 @@ DEFAULT_NAME_ATTRIBUTES = ["name", "name:ru", "name:en", "description"]
     help="Output path for uploaded services data",
 )
 def upload_file(  # pylint: disable=too-many-arguments
-    *,
     config: Config,
+    *,
     input_file: Path,
     service_type_id: int,
     physical_object_type_id: int,
@@ -131,7 +131,7 @@ def upload_file(  # pylint: disable=too-many-arguments
         logger=config.logger,
     )
     try:
-        uploaded = asyncio.run(
+        uploaded, errors = asyncio.run(
             uploader.upload_services(gdf, service_type_id, physical_object_type_id, parallel_workers)
         )
     except KeyboardInterrupt:
@@ -139,6 +139,7 @@ def upload_file(  # pylint: disable=too-many-arguments
         sys.exit(1)
 
     results["uploaded"] = [u.model_dump() for u in uploaded]
+    results["errors"] = errors.to_geo_dict() if errors is not None else None
     results["metadata"] = {"total": gdf.shape[0], "uploaded": len(uploaded)}
     config.logger.info("Finished", log_filename=output_file.name)
     results["time_finish"] = datetime.datetime.now()
@@ -218,6 +219,8 @@ def upload_bulk(  # pylint: disable=too-many-arguments,too-many-locals,too-many-
         "input_dir": str(input_dir.resolve()),
         "config": upload_config.model_dump(),
         "uploaded": {},
+        "errors": {},
+        "skipped": [],
         "metadata": {},
     }
     skipped = []
@@ -225,12 +228,12 @@ def upload_bulk(  # pylint: disable=too-many-arguments,too-many-locals,too-many-
         if file.name not in upload_config.filenames:
             skipped.append(file.name)
             continue
-        logger.info("Reading file", filename=file.name)
+        structlog.contextvars.bind_contextvars(file=file.name)
+        logger.info("Reading file")
         gdf: gpd.GeoDataFrame = gpd.read_file(file)
         gdf = gdf.drop_duplicates().dropna(subset="geometry").to_crs(4326)
         service_type_id = upload_config.filenames[file.name].service_type_id
         physical_object_type_id = upload_config.filenames[file.name].physical_object_type_id
-        structlog.contextvars.bind_contextvars(file=file.name)
         logger.info("Read file", objects=gdf.shape[0])
         if gdf.shape[0] == 0:
             logger.warning("Empty geojson file, skipping")
@@ -259,7 +262,7 @@ def upload_bulk(  # pylint: disable=too-many-arguments,too-many-locals,too-many-
             logger=logger,
         )
         try:
-            uploaded = asyncio.run(
+            uploaded, errors = asyncio.run(
                 uploader.upload_services(gdf, service_type_id, physical_object_type_id, parallel_workers)
             )
         except KeyboardInterrupt:
@@ -267,12 +270,12 @@ def upload_bulk(  # pylint: disable=too-many-arguments,too-many-locals,too-many-
             break
         except Exception:  # pylint: disable=broad-except
             logger.exception("Got exception on processing file, ignoring")
+            results["skipped"].append(file.name)
             continue
         results["uploaded"][file.name] = [u.model_dump() for u in uploaded]
-        results["metadata"][file.name] = {
-            "total": gdf.shape[0],
-            "uploaded": len(uploaded),
-        }
+        if errors is not None:
+            results["errors"][file.name] = errors.to_geo_dict()
+        results["metadata"][file.name] = {"total": gdf.shape[0], "uploaded": len(uploaded)}
     structlog.contextvars.unbind_contextvars("file")
 
     if len(skipped) > 0:
