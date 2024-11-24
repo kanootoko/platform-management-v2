@@ -15,8 +15,11 @@ from pmv2.urban_client.exceptions import APIConnectionError, APITimeoutError
 from pmv2.urban_client.http.exceptions import InvalidStatusCode
 from pmv2.urban_client.http.models import Paginated
 from pmv2.urban_client.models import (
+    FunctionalZone,
+    FunctionalZoneType,
     LivingBuilding,
     PhysicalObjectType,
+    PostFunctionalZone,
     PostPhysicalObject,
     PostService,
     Service,
@@ -229,6 +232,9 @@ class HTTPUrbanClient(UrbanClient):
         async with self._get_session() as session:
             resp = await session.get(path)
             if resp.status != 200:
+                await self._logger.aerror(
+                    "error on get_inner_territories", resp_code=resp.status, resp_text=await resp.text()
+                )
                 raise InvalidStatusCode(f"Unexpected status code on get_inner_territories: {resp.status}")
             result = Paginated[TerritoryWithoutGeometry].model_validate_json(await resp.text())
             return await result.get_all_pages(session)
@@ -252,6 +258,52 @@ class HTTPUrbanClient(UrbanClient):
                         "error on get_common_territory", resp_code=resp.status, resp_text=await resp.text()
                     )
                     raise InvalidStatusCode(f"Unexpected status code on get_common_territory: got {resp.status}")
+
+    @_handle_exceptions
+    async def get_functional_zone_types(self) -> list[FunctionalZoneType]:
+        path = "/api/v1/functional_zones_types"
+        await self._logger.adebug("executing get_functional_zone_types", path=path)
+        async with self._get_session() as session:
+            resp = await session.get(path)
+            if resp.status != 200:
+                await self._logger.aerror(
+                    "error on get_functional_zone_types", resp_code=resp.status, resp_text=await resp.text()
+                )
+                raise InvalidStatusCode(f"Unexpected status code on get_functional_zone_types: {resp.status}")
+            return [FunctionalZoneType.model_validate(entry) for entry in await resp.json()]
+
+    @_handle_exceptions
+    async def get_functional_zones(
+        self, territory_id: int, functional_zone_type_id: int | None = None, include_child_territories: bool = True
+    ) -> list[FunctionalZone]:
+        path = f"/api/v1/territory/{territory_id}/functional_zones"
+        params = {
+            "functional_zone_type_id": functional_zone_type_id,
+            "include_child_territories": "true" if include_child_territories else "false",
+        }
+        await self._logger.adebug("executing get_functional_zones", path=path, params=params)
+        async with self._get_session() as session:
+            resp = await session.get(path, params=params)
+            if resp.status != 200:
+                await self._logger.aerror(
+                    "error on get_functional_zones", resp_code=resp.status, resp_text=await resp.text()
+                )
+                raise InvalidStatusCode(f"Unexpected status code on get_functional_zones: {resp.status}")
+            return [FunctionalZone.model_validate(entry) for entry in await resp.json()]
+
+    @_handle_exceptions
+    async def upload_functional_zone(self, functional_zone: PostFunctionalZone) -> FunctionalZone:
+        body = functional_zone.model_dump(mode="json")
+        await self._logger.adebug("executing upload_functional_zone", body=body)
+        async with self._get_session() as session:
+            resp = await session.post("/api/v1/functional_zones", json=body)
+            if resp.status != 201:
+                await self._logger.aerror(
+                    "error on upload_functional_zone", resp_code=resp.status, resp_text=await resp.text()
+                )
+                raise InvalidStatusCode(f"Unexpected status code on upload_functional_zone: {resp.status}")
+            result = FunctionalZone.model_validate_json(await resp.text())
+        return result
 
     def _get_session(self) -> ClientSession:
         return ClientSession(self._host, timeout=ClientTimeout(20))

@@ -6,6 +6,7 @@ import math
 from typing import Any, Awaitable, Callable
 
 import geopandas as gpd
+import shapely
 import structlog
 
 from pmv2.logic.upload_physical_objects import PhysicalObjectsUploader
@@ -19,6 +20,7 @@ class BuildingsUploader:
     def __init__(  # pylint: disable=too-many-arguments
         self,
         urban_client: UrbanClient,
+        *,
         po_uploader: PhysicalObjectsUploader,
         residents_number_mapper: Callable[[dict[str, Any]], tuple[int | None, Callable[[dict[str, Any]], None]]],
         living_area_mapper: Callable[[dict[str, Any]], tuple[float | None, Callable[[dict[str, Any]], None]]],
@@ -49,7 +51,7 @@ class BuildingsUploader:
         gdf: gpd.GeoDataFrame,
         physical_object_type_mapper: Callable[[dict[str, Any]], tuple[int, bool | None]],
         parallel_workers: int = 1,
-    ) -> list[UrbanObject | tuple[int, int]]:
+    ) -> list[UrbanObject]:
         """Upload GeoDataFrame of buildings with physical object type decided by mapper function."""
         counter = 0
 
@@ -74,7 +76,7 @@ class BuildingsUploader:
 
     async def upload_building(self, full_data: dict[str, Any], physical_object_type_id: int, is_living: bool):
         """Upload a single building of a given physical_object_type and livinglesness."""
-        geometry = full_data.pop("geometry")
+        geometry: shapely.geometry.base.BaseGeometry = full_data.pop("geometry")
         callbacks = []
 
         resident_numer, cb = self._residents_number_mapper(full_data)

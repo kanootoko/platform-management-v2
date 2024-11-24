@@ -24,6 +24,7 @@ class PhysicalObjectsUploader:
     def __init__(  # pylint: disable=too-many-arguments
         self,
         urban_client: UrbanClient,
+        *,
         po_address_mapper: Callable[[dict[str, Any]], tuple[str, Callable[[dict[str, Any]], None]]],
         po_name_mapper: Callable[[dict[str, Any]], tuple[str, Callable[[dict[str, Any]], None]]],
         po_properties_mapper: Callable[[dict[str, Any]], tuple[dict[str, Any], Callable[[dict[str, Any]], None]]],
@@ -43,7 +44,7 @@ class PhysicalObjectsUploader:
         gdf: gpd.GeoDataFrame,
         physical_object_type_id: int,
         parallel_workers: int = 1,
-    ) -> list[UrbanObject | tuple[int, int]]:
+    ) -> list[UrbanObject]:
         """Upload GeoDataFrame of physical objects of the same physical_object_type."""
         counter = 0
 
@@ -122,32 +123,33 @@ class PhysicalObjectsUploader:
 
         if intersecting.shape[0] == 0:
             territory_id = await self._urban_client.get_common_territory_id(geometry)
-            if territory_id is not None:
-                callbacks = []
+            if territory_id is None:
+                return None
 
-                address, cb = self._po_address_mapper(physical_object_data)
-                callbacks.append(cb)
-                name, cb = self._po_name_mapper(physical_object_data)
-                callbacks.append(cb)
-                properties, cb = self._po_properties_mapper(physical_object_data)
-                callbacks.append(cb)
+            callbacks = []
 
-                for cb in callbacks:
-                    cb(physical_object_data)
+            address, cb = self._po_address_mapper(physical_object_data)
+            callbacks.append(cb)
+            name, cb = self._po_name_mapper(physical_object_data)
+            callbacks.append(cb)
+            properties, cb = self._po_properties_mapper(physical_object_data)
+            callbacks.append(cb)
 
-                result = await self._urban_client.upload_physical_object(
-                    PostPhysicalObject(
-                        geometry=shapely_to_geometry(geometry),
-                        territory_id=territory_id,
-                        physical_object_type_id=physical_object_type_id,
-                        centre_point=None,
-                        address=address,
-                        name=name,
-                        properties=properties,
-                    )
+            for cb in callbacks:
+                cb(physical_object_data)
+
+            result = await self._urban_client.upload_physical_object(
+                PostPhysicalObject(
+                    geometry=shapely_to_geometry(geometry),
+                    territory_id=territory_id,
+                    physical_object_type_id=physical_object_type_id,
+                    centre_point=None,
+                    address=address,
+                    name=name,
+                    properties=properties,
                 )
-                return result
-            return None
+            )
+            return result
 
         physical_object_id = intersecting.iloc[0]["physical_object_id"]
 

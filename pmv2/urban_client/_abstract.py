@@ -7,8 +7,11 @@ import geopandas as gpd
 import shapely
 
 from pmv2.urban_client.models import (
+    FunctionalZone,
+    FunctionalZoneType,
     LivingBuilding,
     PhysicalObjectType,
+    PostFunctionalZone,
     PostPhysicalObject,
     PostService,
     Service,
@@ -53,6 +56,7 @@ class UrbanClient(abc.ABC):
     async def upload_physical_object(self, physycal_object: PostPhysicalObject) -> UrbanObject:
         """Upload building with given geometry."""
 
+    @abc.abstractmethod
     async def add_living_building(
         self, physical_object_id: int, residents_number: int, living_area: float, properties: dict[str, Any]
     ) -> LivingBuilding:
@@ -75,3 +79,17 @@ class UrbanClient(abc.ABC):
     @abc.abstractmethod
     async def get_common_territory_id(self, geom: shapely.geometry.base.BaseGeometry) -> int | None:
         """Get the most deep territory id which fully covers given geometry."""
+
+    @abc.abstractmethod
+    async def get_functional_zone_types(self) -> list[FunctionalZoneType]:
+        """Get a list of functional zone types."""
+
+    @abc.abstractmethod
+    async def get_functional_zones(
+        self, territory_id: int, functional_zone_type_id: int | None = None, include_child_territories: bool = True
+    ) -> list[FunctionalZone]:
+        """Get a list of functional zones for a territory."""
+
+    @abc.abstractmethod
+    async def upload_functional_zone(self, functional_zone: PostFunctionalZone) -> list[FunctionalZone]:
+        """Add given functional zone."""

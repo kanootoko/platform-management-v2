@@ -12,7 +12,6 @@ import click
 import geopandas as gpd
 
 from pmv2.logic import upload_buildings as logic
-from pmv2.urban_client.models import Service, UrbanObject
 
 from . import _mappers
 from ._main import Config, main, pass_config
@@ -62,6 +61,7 @@ NON_LIVING_BUILDING_NAME = "Здание"
 )
 def upload_file(  # pylint: disable=too-many-locals
     config: Config,
+    *,
     input_file: Path,
     is_living_field: str,
     parallel_workers: int,
@@ -96,7 +96,7 @@ def upload_file(  # pylint: disable=too-many-locals
         living_type_id=living_type_id.physical_object_type_id,
         non_living_type_id=non_living_type_id.physical_object_type_id,
     )
-    results: dict[str, list[Service]] = {
+    results: dict[str, Any] = {
         "type": "upload_buildings",
         "time_start": datetime.datetime.now(),
         "input_file": str(input_file.resolve()),
@@ -120,7 +120,7 @@ def upload_file(  # pylint: disable=too-many-locals
     )
     uploader = logic.BuildingsUploader(
         urban_client,
-        po_uploader,
+        po_uploader=po_uploader,
         residents_number_mapper=_mappers.none_mapper,
         living_area_mapper=_mappers.get_attribute_mapper(["living_area"]),
         living_building_properties_mapper=_mappers.full_dictionary_mapper,
@@ -133,12 +133,7 @@ def upload_file(  # pylint: disable=too-many-locals
         config.logger.error("Got interruption signal, impossible to save results")
         sys.exit(1)
 
-    uploaded = [
-        s.model_dump() if isinstance(s, UrbanObject) else {"physical_object_id": s[0], "geometry_id": s[1]}
-        for s in uploaded
-    ]
-
-    results["uploaded"] = uploaded
+    results["uploaded"] = [u.model_dump() for u in uploaded]
     results["metadata"] = {"total": gdf.shape[0], "uploaded": len(uploaded)}
     config.logger.info("Finished", log_filename=output_file.name)
     results["time_finish"] = datetime.datetime.now()

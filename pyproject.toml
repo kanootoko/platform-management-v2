@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "platform-management-v2"
-version = "0.4.0"
+version = "0.5.0"
 description = "Temporary utility for data manipulation of IDU Digital City Platform"
 authors = ["Aleksei Sokol <kanootoko@gmail.com>"]
 license = "MIT"
@@ -43,7 +43,7 @@ target-version = ['py310']
 [tool.pylint.format]
 max-line-length = 120
 expected-line-ending-format = "LF"
-disable = []
+disable = ["duplicate-code"]
 extension-pkg-allow-list = []
 
 [tool.isort]

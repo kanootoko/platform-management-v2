@@ -6,6 +6,7 @@ import pickle
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 import click
 import geopandas as gpd
@@ -14,7 +15,6 @@ import yaml
 
 from pmv2.logic import upload_physical_objects as logic
 from pmv2.logic.upload_physical_objects_bulk import UploadConfig
-from pmv2.urban_client.models import Service, UrbanObject
 
 from . import _mappers
 from ._main import Config, main, pass_config
@@ -59,6 +59,7 @@ def physical_objects_group():
 )
 def upload_file(
     config: Config,
+    *,
     input_file: Path,
     physical_object_type_id: int,
     parallel_workers: int,
@@ -73,7 +74,7 @@ def upload_file(
     if not asyncio.run(urban_client.is_alive()):
         print("Urban API at is unavailable, exiting")
         sys.exit(1)
-    results: dict[str, list[Service]] = {
+    results: dict[str, Any] = {
         "type": "upload_physical_objects",
         "time_start": datetime.datetime.now(),
         "input_file": str(input_file.resolve()),
@@ -97,17 +98,12 @@ def upload_file(
         config.logger.error("Got interruption signal, impossible to save results")
         raise
 
-    uploaded = [
-        s.model_dump() if isinstance(s, UrbanObject) else {"physical_object_id": s[0], "geometry_id": s[1]}
-        for s in uploaded
-    ]
-
-    results["uploaded"] = uploaded
+    results["uploaded"] = [u.model_dump() for u in uploaded]
     results["metadata"] = {"total": gdf.shape[0], "uploaded": len(uploaded)}
     config.logger.info("Finished", log_filename=output_file.name)
     results["time_finish"] = datetime.datetime.now()
     with open(output_file, "wb") as file:
-        pickle.dump(uploaded, file)
+        pickle.dump(results, file)
 
 
 @physical_objects_group.command("upload-bulk")
@@ -146,6 +142,7 @@ def upload_file(
 )
 def upload_bulk(  # pylint: disable=too-many-arguments,too-many-locals
     config: Config,
+    *,
     input_dir: Path,
     upload_config_file: Path,
     parallel_workers: int,
@@ -164,8 +161,9 @@ def upload_bulk(  # pylint: disable=too-many-arguments,too-many-locals
 
     with upload_config_file.open(encoding="utf-8") as file:
         upload_config = UploadConfig.model_validate(yaml.safe_load(file)).transform_to_ids(physical_object_types)
+
     logger.info("Prepared upload config", config=upload_config)
-    results: dict[str, list[Service]] = {
+    results: dict[str, Any] = {
         "type": "upload_physical_objects_bulk",
         "date": datetime.datetime.now(),
         "input_dir": str(input_dir.resolve()),
@@ -189,8 +187,8 @@ def upload_bulk(  # pylint: disable=too-many-arguments,too-many-locals
             continue
         uploader = logic.PhysicalObjectsUploader(
             urban_client,
-            po_address_mapper=_mappers.none_mapper,
-            po_name_mapper=_mappers.none_mapper,
+            po_address_mapper=_mappers.get_attribute_mapper(["address"]),
+            po_name_mapper=_mappers.get_attribute_mapper(["name"]),
             po_properties_mapper=_mappers.full_dictionary_mapper,
             logger=config.logger,
         )
@@ -202,10 +200,7 @@ def upload_bulk(  # pylint: disable=too-many-arguments,too-many-locals
         except Exception:  # pylint: disable=broad-except
             logger.exception("Got exception on processing file, ignoring")
             continue
-        results["uploaded"][file.name] = [
-            s.model_dump() if isinstance(s, UrbanObject) else {"physical_object_id": s[0], "geometry_id": s[1]}
-            for s in uploaded
-        ]
+        results["uploaded"][file.name] = [s.model_dump() for s in uploaded]
         results["metadata"][file.name] = {
             "total": gdf.shape[0],
             "uploaded": len(uploaded),
@@ -226,6 +221,7 @@ def upload_bulk(  # pylint: disable=too-many-arguments,too-many-locals
     "-d",
     "input_dir",
     type=click.Path(exists=True, file_okay=False, path_type=Path),
+    required=True,
     help="Path to input directory with physical objects geojsons",
 )
 @click.option(
@@ -233,6 +229,7 @@ def upload_bulk(  # pylint: disable=too-many-arguments,too-many-locals
     "-c",
     "upload_config_file",
     type=click.Path(dir_okay=False, path_type=Path),
+    required=True,
     help="Path to save bulk config yaml file",
 )
 def prepare_bulk_config(

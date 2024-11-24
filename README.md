@@ -18,7 +18,8 @@ Command group for getting lists of entities dictionaries available
 
 #### territories
 
-Print territories hierarchy up to given level. Realization is really slow, there will be one API call executed sequentially for each territory of given level limit (if set).
+Print territories hierarchy up to given level. Realization is really slow, there will be one API call
+executed sequentially for each territory of given level limit (if set).
 
 #### service-types, physical-object-types
 
@@ -44,7 +45,17 @@ Same for the given directory of geojsons with usage of edited config file.
 
 Similar to `services`, it allows to upload physical objects with geometry without service object.
 
+### functional-zones
+
+Similar to all above, it allows to upload functional zones to territories.
+
+### pickle
+
+Some of the commands produce pickle log-files with results of their work. This group provide basic utility to
+look inside those files.
+
 ## Caution
 
-1. At the current state, services upload does not check if service already exists in the physical object + geometyry, nor it checks availability of physical objects around the given geometry
+1. At the current state, services upload does not check if service already exists in the physical object + geometry,
+nor it checks availability of physical objects around the given geometry
 2. Authentication is not yet supported

@@ -6,6 +6,7 @@ import math
 from typing import Any, Awaitable, Callable
 
 import geopandas as gpd
+import shapely
 import structlog
 
 from pmv2.logic.upload_physical_objects import PhysicalObjectsUploader
@@ -19,6 +20,7 @@ class ServicesUploader:
     def __init__(  # pylint: disable=too-many-arguments
         self,
         urban_client: UrbanClient,
+        *,
         po_uploader: PhysicalObjectsUploader,
         service_name_mapper: Callable[[dict[str, Any]], tuple[str, Callable[[dict[str, Any]], None]]],
         service_properties_mapper: Callable[[dict[str, Any]], tuple[dict[str, Any], Callable[[dict[str, Any]], None]]],
@@ -58,7 +60,10 @@ class ServicesUploader:
         gdfs = [gdf.iloc[i : i + part_size] for i in range(0, gdf.shape[0], part_size)]
         workers = [
             self._upload_services_batch(
-                part, physical_object_type_id, service_type_id, logging_wrapper(self.upload_service)
+                part,
+                physical_object_type_id=physical_object_type_id,
+                service_type_id=service_type_id,
+                upload_service=logging_wrapper(self.upload_service),
             )
             for part in gdfs
         ]
@@ -99,6 +104,7 @@ class ServicesUploader:
     async def _upload_services_batch(  # pylint: disable=too-many-arguments
         self,
         gdf: gpd.GeoDataFrame,
+        *,
         physical_object_type_id: int,
         service_type_id: int,
         upload_service: Awaitable[Callable[[dict[str, Any], int, int, int], Service]] = ...,
@@ -111,7 +117,7 @@ class ServicesUploader:
         for _, service_series in gdf.iterrows():
             try:
                 full_data = service_series.dropna().to_dict()
-                geometry = full_data.pop("geometry")
+                geometry: shapely.geometry.base.BaseGeometry = full_data.pop("geometry")
 
                 physical_object = await self._po_uploader.upload_physical_object_if_not_exists(
                     geometry=geometry,
