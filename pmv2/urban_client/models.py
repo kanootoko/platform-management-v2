@@ -52,9 +52,16 @@ class PostPhysicalObject(BaseModel):
 
 
 class PhysicalObjectType(BaseModel):
-    """Type of physical object."""
+    """Type of physical object id and name."""
 
     physical_object_type_id: int
+    name: str
+
+
+class TerritoryBase(BaseModel):
+    """Territory id and name."""
+
+    id: int
     name: str
 
 
@@ -71,6 +78,7 @@ class PhysicalObject(BaseModel):
 
 class LivingBuilding(BaseModel):
     """Living building additional to physical object of corresponding type."""
+
     living_building_id: int
     physical_object: PhysicalObject
     residents_number: int | None = None
@@ -82,7 +90,7 @@ class ObjectGeometry(BaseModel):
     """Object geometry entity."""
 
     object_geometry_id: int
-    territory_id: int
+    territory: TerritoryBase
     address: str | None
     geometry: Geometry
     centre_point: gjp.Point
@@ -149,5 +157,42 @@ class TerritoryWithoutGeometry(BaseModel):
     properties: dict[str, Any]
     admin_center: int | None
     okato_code: str | None
+    created_at: datetime.datetime
+    updated_at: datetime.datetime
+
+
+class FunctionalZoneType(BaseModel):
+    """Functional zone type entity."""
+
+    functional_zone_type_id: int
+    name: str
+    zone_nickname: str
+    description: str
+
+
+class FunctionalZoneTypeBase(BaseModel):
+    """Functional zone type base entity with only id and name."""
+
+    id: int
+    name: str
+
+
+class PostFunctionalZone(BaseModel):
+    """Functional zone entity."""
+
+    geometry: Geometry
+    territory_id: int
+    functional_zone_type_id: int
+    properties: dict[str, Any]
+
+
+class FunctionalZone(BaseModel):
+    """Functional zone entity."""
+
+    functional_zone_id: int
+    geometry: Geometry
+    territory_id: TerritoryBase
+    functional_zone_type: FunctionalZoneTypeBase
+    properties: dict[str, Any]
     created_at: datetime.datetime
     updated_at: datetime.datetime

@@ -6,6 +6,7 @@ import pickle
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 import click
 import geopandas as gpd
@@ -15,7 +16,6 @@ import yaml
 from pmv2.logic.upload_physical_objects import PhysicalObjectsUploader
 from pmv2.logic.upload_services import ServicesUploader
 from pmv2.logic.upload_services_bulk import UploadConfig, UploadFileConfig
-from pmv2.urban_client.models import Service
 
 from . import _mappers
 from ._main import Config, main, pass_config
@@ -36,24 +36,28 @@ DEFAULT_NAME_ATTRIBUTES = ["name", "name:ru", "name:en", "description"]
     "--input-file",
     "-i",
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    required=True,
     help="Path to input geojson with services",
 )
 @click.option(
     "--service-type-id",
     "-s",
     type=int,
+    required=True,
     help="Indentifier of a service type",
 )
 @click.option(
     "--physical-object-type-id",
     "-p",
     type=int,
+    required=True,
     help="Indentifier of a physical_object type",
 )
 @click.option(
     "--default-capacity",
     "-dc",
     type=int,
+    required=True,
     help="Default capacity of service if not in data",
 )
 @click.option(
@@ -73,6 +77,7 @@ DEFAULT_NAME_ATTRIBUTES = ["name", "name:ru", "name:en", "description"]
 )
 def upload_file(  # pylint: disable=too-many-arguments
     config: Config,
+    *,
     input_file: Path,
     service_type_id: int,
     physical_object_type_id: int,
@@ -92,7 +97,8 @@ def upload_file(  # pylint: disable=too-many-arguments
     if not asyncio.run(urban_client.is_alive()):
         print("Urban API at is unavailable, exiting")
         sys.exit(1)
-    results: dict[str, list[Service]] = {
+
+    results: dict[str, Any] = {
         "type": "upload_services",
         "time_start": datetime.datetime.now(),
         "input_file": str(input_file.resolve()),
@@ -118,28 +124,27 @@ def upload_file(  # pylint: disable=too-many-arguments
     )
     uploader = ServicesUploader(
         urban_client,
-        po_uploader,
-        _mappers.get_attribute_mapper(DEFAULT_NAME_ATTRIBUTES, DEFAULT_SERVICE_NAME),
-        _mappers.full_dictionary_mapper,
-        _mappers.get_service_capacity_mapper(default_capacity),
-        config.logger,
+        po_uploader=po_uploader,
+        service_name_mapper=_mappers.get_attribute_mapper(DEFAULT_NAME_ATTRIBUTES, DEFAULT_SERVICE_NAME),
+        service_properties_mapper=_mappers.full_dictionary_mapper,
+        service_capacity_mapper=_mappers.get_service_capacity_mapper(default_capacity),
+        logger=config.logger,
     )
     try:
-        uploaded = asyncio.run(
+        uploaded, errors = asyncio.run(
             uploader.upload_services(gdf, service_type_id, physical_object_type_id, parallel_workers)
         )
     except KeyboardInterrupt:
         config.logger.error("Got interruption signal, impossible to save results")
         sys.exit(1)
 
-    uploaded = [s.model_dump() for s in uploaded]
-
-    results["uploaded"] = uploaded
+    results["uploaded"] = [u.model_dump() for u in uploaded]
+    results["errors"] = errors.to_geo_dict() if errors is not None else None
     results["metadata"] = {"total": gdf.shape[0], "uploaded": len(uploaded)}
     config.logger.info("Finished", log_filename=output_file.name)
     results["time_finish"] = datetime.datetime.now()
     with open(output_file, "wb") as file:
-        pickle.dump(uploaded, file)
+        pickle.dump(results, file)
 
 
 @services_group.command("upload-bulk")
@@ -178,6 +183,7 @@ def upload_file(  # pylint: disable=too-many-arguments
 )
 def upload_bulk(  # pylint: disable=too-many-arguments,too-many-locals,too-many-statements
     config: Config,
+    *,
     input_dir: Path,
     upload_config_file: Path,
     parallel_workers: int,
@@ -206,12 +212,15 @@ def upload_bulk(  # pylint: disable=too-many-arguments,too-many-locals,too-many-
         )
     capacity_dict = {data.service_type_id: data.default_capacity for data in upload_config.filenames.values()}
     logger.info("Prepared upload config", config=upload_config)
-    results: dict[str, list[Service]] = {
+
+    results: dict[str, Any] = {
         "type": "upload_services_bulk",
         "time_start": datetime.datetime.now(),
         "input_dir": str(input_dir.resolve()),
         "config": upload_config.model_dump(),
         "uploaded": {},
+        "errors": {},
+        "skipped": [],
         "metadata": {},
     }
     skipped = []
@@ -219,12 +228,12 @@ def upload_bulk(  # pylint: disable=too-many-arguments,too-many-locals,too-many-
         if file.name not in upload_config.filenames:
             skipped.append(file.name)
             continue
-        logger.info("Reading file", filename=file.name)
+        structlog.contextvars.bind_contextvars(file=file.name)
+        logger.info("Reading file")
         gdf: gpd.GeoDataFrame = gpd.read_file(file)
         gdf = gdf.drop_duplicates().dropna(subset="geometry").to_crs(4326)
         service_type_id = upload_config.filenames[file.name].service_type_id
         physical_object_type_id = upload_config.filenames[file.name].physical_object_type_id
-        structlog.contextvars.bind_contextvars(file=file.name)
         logger.info("Read file", objects=gdf.shape[0])
         if gdf.shape[0] == 0:
             logger.warning("Empty geojson file, skipping")
@@ -246,14 +255,14 @@ def upload_bulk(  # pylint: disable=too-many-arguments,too-many-locals,too-many-
         )
         uploader = ServicesUploader(
             urban_client,
-            po_uploader,
+            po_uploader=po_uploader,
             service_name_mapper=_mappers.get_attribute_mapper(DEFAULT_NAME_ATTRIBUTES, DEFAULT_SERVICE_NAME),
             service_properties_mapper=_mappers.full_dictionary_mapper,
             service_capacity_mapper=_mappers.get_service_capacity_mapper(capacity_dict[service_type_id]),
             logger=logger,
         )
         try:
-            uploaded = asyncio.run(
+            uploaded, errors = asyncio.run(
                 uploader.upload_services(gdf, service_type_id, physical_object_type_id, parallel_workers)
             )
         except KeyboardInterrupt:
@@ -261,12 +270,12 @@ def upload_bulk(  # pylint: disable=too-many-arguments,too-many-locals,too-many-
             break
         except Exception:  # pylint: disable=broad-except
             logger.exception("Got exception on processing file, ignoring")
+            results["skipped"].append(file.name)
             continue
-        results["uploaded"][file.name] = [s.model_dump() for s in uploaded]
-        results["metadata"][file.name] = {
-            "total": gdf.shape[0],
-            "uploaded": len(uploaded),
-        }
+        results["uploaded"][file.name] = [u.model_dump() for u in uploaded]
+        if errors is not None:
+            results["errors"][file.name] = errors.to_geo_dict()
+        results["metadata"][file.name] = {"total": gdf.shape[0], "uploaded": len(uploaded)}
     structlog.contextvars.unbind_contextvars("file")
 
     if len(skipped) > 0:

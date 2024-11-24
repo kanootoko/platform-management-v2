@@ -119,3 +119,44 @@ def list_physical_object_types(
             print(f"{service_type.physical_object_type_id:3} - {service_type.name}")
     else:
         print(json.dumps({"physical_object_types": [st.model_dump() for st in physical_object_types]}))
+
+
+@list_group.command("functional-zone-types")
+@pass_config
+@click.option(
+    "--format",
+    "-f",
+    type=click.Choice(["pretty", "json"], case_sensitive=False),
+    default="pretty",
+    show_default=True,
+    help="Format of data output",
+)
+@click.option(
+    "--order-by",
+    "-s",
+    type=click.Choice(["id", "name"], case_sensitive=False),
+    default="id",
+    show_default=True,
+    help="Attribute to sort by",
+)
+def list_functional_zone_types(
+    config: Config,
+    format: Literal["pretty", "json"],  # pylint: disable=redefined-builtin
+    order_by: Literal["id", "name"],
+):
+    """List functional_zone types available in Urban API."""
+    urban_client = config.urban_client
+    functional_zone_types = asyncio.run(urban_client.get_functional_zone_types())
+    if len(functional_zone_types) == 0:
+        print("There are no functional_zone available")
+        return
+    if order_by == "id":
+        functional_zone_types.sort(key=lambda el: el.functional_zone_type_id)
+    else:
+        functional_zone_types.sort(key=lambda el: el.name)
+
+    if format == "pretty":
+        for service_type in functional_zone_types:
+            print(f"{service_type.functional_zone_type_id:3} - {service_type.name}")
+    else:
+        print(json.dumps({"physical_object_types": [st.model_dump() for st in functional_zone_types]}))
