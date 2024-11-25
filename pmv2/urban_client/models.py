@@ -191,7 +191,7 @@ class FunctionalZone(BaseModel):
 
     functional_zone_id: int
     geometry: Geometry
-    territory_id: TerritoryBase
+    territory: TerritoryBase
     functional_zone_type: FunctionalZoneTypeBase
     properties: dict[str, Any]
     created_at: datetime.datetime

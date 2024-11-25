@@ -88,6 +88,7 @@ class FunctionalZonesUploader:
                 functional_zone_type_id=functional_zone_type_id,
                 properties=properties,
             )
+            return existing
 
         functional_zone = PostFunctionalZone(
             geometry=shapely_to_geometry(geometry),
