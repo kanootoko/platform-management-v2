@@ -98,8 +98,9 @@ class PhysicalObjectsUploader:
                     self._logger.warning(
                         "Physical object has no territory parent. Skipping...", physical_object_data=po_data
                     )
-                    continue
-                uploaded_pos.append(result)
+                    errors.append(idx)
+                else:
+                    uploaded_pos.append(result)
             except Exception:  # pylint: disable=broad-except
                 self._logger.exception("Error on physical object upload", physical_object_data=po_data)
                 errors.append(idx)

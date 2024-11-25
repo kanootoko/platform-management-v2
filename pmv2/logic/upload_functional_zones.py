@@ -128,7 +128,10 @@ class FunctionalZonesUploader:
                 full_data = data_series.dropna().to_dict()
                 functional_zone_type_id = functional_zone_type_mapper(full_data)
                 uploaded = await upload_functional_zone(data_series.dropna().to_dict(), functional_zone_type_id)
-                if uploaded is not None:
+                if uploaded is None:
+                    self._logger.warning("Functional zone has no territory parent. Skipping...", idx=idx)
+                    errors.append(idx)
+                else:
                     uploaded_functional_zones.append(uploaded)
             except Exception:  # pylint: disable=broad-except
                 self._logger.exception("Error on functional zone upload", physical_object_data=full_data)

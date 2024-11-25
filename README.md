@@ -52,7 +52,19 @@ Similar to all above, it allows to upload functional zones to territories.
 ### pickle
 
 Some of the commands produce pickle log-files with results of their work. This group provide basic utility to
-look inside those files.
+work with those files.
+
+#### preview
+
+Preview command can be used to get a look inside pickle without launching python interpreter.
+
+#### export-errors
+
+This command can be used to export errors after uploading a single file to a geojson for further research or an upload retry.
+
+#### export-errors-bulk
+
+Similar to command above, used to export multiple geojsons files with errors after bulk upload.
 
 ## Caution
 

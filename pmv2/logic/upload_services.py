@@ -135,6 +135,7 @@ class ServicesUploader:
                 )
                 if physical_object is None:
                     await self._logger.awarning("Service has no territory parent. Skipping...", data=full_data)
+                    errors.append(idx)
                     continue
                 uploaded_services.append(
                     await upload_service(

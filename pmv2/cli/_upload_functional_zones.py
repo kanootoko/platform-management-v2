@@ -73,7 +73,7 @@ DEFAULT_NAME_ATTRIBUTES = ["name", "name:ru", "name:en", "description"]
     "--output-pickle",
     "-o",
     "output_file",
-    type=click.Path(writable=True, path_type=Path),
+    type=click.Path(dir_okay=False, writable=True, path_type=Path),
     show_default="uploaded_one_<timestamp>.pickle",
     help="Output path for uploaded services data",
 )
@@ -207,7 +207,7 @@ def upload_file(  # pylint: disable=too-many-arguments,too-many-locals
     "--output-pickle",
     "-o",
     "output_file",
-    type=click.Path(writable=True, path_type=Path),
+    type=click.Path(dir_okay=False, writable=True, path_type=Path),
     show_default="uploaded_one_<timestamp>.pickle",
     help="Output path for uploaded services data",
 )

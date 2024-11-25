@@ -53,7 +53,7 @@ def physical_objects_group():
     "--output-pickle",
     "-o",
     "output_file",
-    type=click.Path(writable=True, path_type=Path),
+    type=click.Path(dir_okay=False, writable=True, path_type=Path),
     show_default="uploaded_one_<timestamp>.pickle",
     help="Output path for uploaded physical objects data",
 )
@@ -137,7 +137,7 @@ def upload_file(
     "--output-pickle",
     "-o",
     "output_file",
-    type=click.Path(writable=True, path_type=Path),
+    type=click.Path(dir_okay=False, writable=True, path_type=Path),
     show_default="uploaded_<timestamp>.pickle",
     help="Output path for uploaded physical objects data",
 )

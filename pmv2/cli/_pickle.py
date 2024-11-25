@@ -1,7 +1,9 @@
 """Physical objects uploading commands are defined here."""
 
+import json
 import pickle
 from pathlib import Path
+import sys
 
 import click
 
@@ -45,7 +47,7 @@ def pickles_group():
     show_envvar=True,
     help="Number of dictionaries elements to print",
 )
-def prepare_bulk_config(max_level: int, array_elements: int, dict_elements: int, pickle_file: Path):
+def preview(max_level: int, array_elements: int, dict_elements: int, pickle_file: Path):
     """Preview pickle file content.
 
     Single argument is a path to pickle file produced by other operation.
@@ -53,3 +55,54 @@ def prepare_bulk_config(max_level: int, array_elements: int, dict_elements: int,
     with pickle_file.open("rb") as file:
         content = pickle.load(file)
     print_upto_level(content, max_level, array_elements=array_elements, dict_elements=dict_elements)
+
+
+@pickles_group.command("export-errors")
+@click.option(
+    "--output",
+    "-o",
+    "output_file",
+    type=click.Path(dir_okay=False, writable=True, path_type=Path),
+    required=True,
+    help="Output path for errors objects file",
+)
+@click.argument("pickle_file", type=click.Path(dir_okay=False, path_type=Path))
+def export_errors(output_file: Path, pickle_file: Path):
+    """Export errors section from pickle file after single file upload."""
+    with pickle_file.open("rb") as file:
+        content = pickle.load(file)
+    if "errors" not in content:
+        print("File does not contain 'errors' section!")
+        sys.exit(1)
+
+    with output_file.open("w", encoding="utf-8") as file:
+        json.dump(content["errors"], file, ensure_ascii=False, indent=4)
+
+
+@pickles_group.command("export-errors-bulk")
+@click.option(
+    "--output",
+    "-o",
+    "output_dir",
+    type=click.Path(dir_okay=False, writable=True, path_type=Path),
+    required=True,
+    help="Output path for errors objects directory",
+)
+@click.argument("pickle_file", type=click.Path(dir_okay=False, path_type=Path))
+def export_errors_bulk(output_dir: Path, pickle_file: Path):
+    """Export errors section from pickle file after bulk upload.
+
+    Creates multiple geojson files in the given directory.
+    """
+    with pickle_file.open("rb") as file:
+        content = pickle.load(file)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    if "errors" not in content:
+        print("File does not contain 'errors' section!")
+        sys.exit(1)
+
+    filename: str
+    for filename, errors in content["errors"].items():
+        output_file = output_dir / filename
+        with output_file.open("w", encoding="utf-8") as file:
+            json.dump(errors, file, ensure_ascii=False, indent=4)
