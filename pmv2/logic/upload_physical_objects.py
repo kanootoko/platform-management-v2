@@ -7,6 +7,7 @@ from functools import partial
 from typing import Any, Awaitable, Callable
 
 import geopandas as gpd
+import numpy as np
 import pandas as pd
 import pyproj
 import shapely
@@ -189,9 +190,13 @@ class PhysicalObjectsUploader:
                 | around_3857.covered_by(geometry_3857)
             )
         ]
-        around_3857["intersection"] = around_3857.intersection(geometry_3857).area / geometry_3857.area
+        intersection_area: pd.Series = around_3857.intersection(geometry_3857).area
+        around_3857["intersection"] = np.minimum(
+            intersection_area / geometry_3857.area, intersection_area / around_3857.area
+        )
 
-        intersecting = objects_around.loc[(around_3857["intersection"] > intersection_area_boundary).index].copy()
+        intersecting = objects_around.copy()
         intersecting["intersection"] = around_3857["intersection"]
+        intersecting = intersecting[intersecting["intersection"] > intersection_area_boundary]
 
         return intersecting.sort_values("intersection", ascending=False)
