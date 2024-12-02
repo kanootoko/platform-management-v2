@@ -183,6 +183,9 @@ class PostFunctionalZone(BaseModel):
     geometry: Geometry
     territory_id: int
     functional_zone_type_id: int
+    name: str | None
+    source: str
+    year: int
     properties: dict[str, Any]
 
 

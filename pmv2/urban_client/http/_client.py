@@ -296,7 +296,11 @@ class HTTPUrbanClient(UrbanClient):
         body = functional_zone.model_dump(mode="json")
         await self._logger.adebug("executing upload_functional_zone", body=body)
         async with self._get_session() as session:
-            resp = await session.post("/api/v1/functional_zones", json=body)
+            resp = await session.post(
+                "/api/v1/functional_zones",
+                json=body,
+                params={"year": functional_zone.year, "source": functional_zone.source},
+            )
             if resp.status != 201:
                 await self._logger.aerror(
                     "error on upload_functional_zone", resp_code=resp.status, resp_text=await resp.text()

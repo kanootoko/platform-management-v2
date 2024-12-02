@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "platform-management-v2"
-version = "0.5.3"
+version = "0.5.4"
 description = "Temporary utility for data manipulation of IDU Digital City Platform"
 authors = ["Aleksei Sokol <kanootoko@gmail.com>"]
 license = "MIT"

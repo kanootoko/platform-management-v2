@@ -17,14 +17,21 @@ from pmv2.urban_client.models import FunctionalZone, PostFunctionalZone, shapely
 class FunctionalZonesUploader:
     """Functional zones uploader."""
 
-    def __init__(
+    def __init__(  # pylint: disable=too-many-arguments
         self,
         urban_client: UrbanClient,
+        *,
         properties_mapper: Callable[[dict[str, Any]], tuple[dict[str, Any], Callable[[dict[str, Any]], None]]],
+        year_mapper: Callable[[dict[str, Any]], tuple[int, Callable[[dict[str, Any]], None]]],
+        source_mapper: Callable[[dict[str, Any]], tuple[str, Callable[[dict[str, Any]], None]]],
+        name_mapper: Callable[[dict[str, Any]], tuple[str | None, Callable[[dict[str, Any]], None]]],
         logger: structlog.stdlib.BoundLogger = ...,
     ):
         self._urban_client = urban_client
         self._properties_mapper = properties_mapper
+        self._year_mapper = year_mapper
+        self._source_mapper = source_mapper
+        self._name_mapper = name_mapper
         if logger is ...:
             self._logger = structlog.get_logger("upload_functional_zones")
         else:
@@ -73,6 +80,17 @@ class FunctionalZonesUploader:
         """Upload a single functional_zone of a given type."""
         geometry: shapely.geometry.base.BaseGeometry = data.pop("geometry")
 
+        callbacks = []
+        name, cb = self._name_mapper(data)
+        callbacks.append(cb)
+        year, cb = self._year_mapper(data)
+        callbacks.append(cb)
+        source, cb = self._source_mapper(data)
+        callbacks.append(cb)
+
+        for cb in callbacks:
+            cb(data)
+
         properties, cb = self._properties_mapper(data)
         cb(data)
 
@@ -94,6 +112,9 @@ class FunctionalZonesUploader:
             geometry=shapely_to_geometry(geometry),
             territory_id=territory_id,
             functional_zone_type_id=functional_zone_type_id,
+            name=name,
+            year=year,
+            source=source,
             properties=properties,
         )
         return await self._urban_client.upload_functional_zone(functional_zone)
