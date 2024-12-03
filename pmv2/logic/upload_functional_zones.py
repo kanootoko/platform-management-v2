@@ -98,11 +98,13 @@ class FunctionalZonesUploader:
         if territory_id is None:
             return None
 
-        existing = await self._get_functional_zone(territory_id, geometry, functional_zone_type_id)
+        existing = await self._get_functional_zone(territory_id, geometry, functional_zone_type_id, year, source)
         if existing is not None:
             self._logger.warning(
                 "Return existing functional zone instead of uploading",
                 territory_id=territory_id,
+                year=year,
+                source=source,
                 functional_zone_type_id=functional_zone_type_id,
                 properties=properties,
             )
@@ -120,10 +122,17 @@ class FunctionalZonesUploader:
         return await self._urban_client.upload_functional_zone(functional_zone)
 
     async def _get_functional_zone(
-        self, territory_id: int, geometry: shapely.geometry.base.BaseGeometry, functional_zone_type_id: int
+        self,
+        territory_id: int,
+        geometry: shapely.geometry.base.BaseGeometry,
+        functional_zone_type_id: int,
+        year: int,
+        source: str,
     ) -> FunctionalZone | None:
         existing = await self._urban_client.get_functional_zones(
             territory_id,
+            year,
+            source,
             functional_zone_type_id,
         )
         for zone in existing:

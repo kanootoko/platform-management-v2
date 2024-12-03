@@ -1,3 +1,3 @@
 """pmv2 version is defined here along with pyproject.toml."""
 
-VERSION = "0.5.4"
+VERSION = "0.5.5"
