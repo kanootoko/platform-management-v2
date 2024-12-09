@@ -11,3 +11,7 @@ class APIConnectionError(APIError):
 
 class APITimeoutError(APIError, TimeoutError):
     """Timed out while awaiting response from UrbanAPI."""
+
+
+class ObjectNotFoundError(APIError):
+    """Given object is not found, therefore further calculations are impossible."""
