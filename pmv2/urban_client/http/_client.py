@@ -85,13 +85,12 @@ class HTTPUrbanClient(UrbanClient):
     ) -> gpd.GeoDataFrame:
         """Get physical objects around given geometry from Urban API."""
         body = shapely.geometry.mapping(geom)
-        clause = ""
+        params = {}
         if physical_object_type_id is not None:
-            clause = f"?physical_object_type_id={physical_object_type_id}"
-        uri = f"/api/v1/physical_objects/around{clause}"
-        await self._logger.adebug("executing get_objects_around", body=body, uri=uri)
+            params["physical_object_type_id"] = physical_object_type_id
+        await self._logger.adebug("executing get_objects_around", body=body, params=params)
         async with self._get_session() as session:
-            resp = await session.post(uri, json=body)
+            resp = await session.post("/api/v1/physical_objects/around", params=params, json=body)
             if resp.status != 200:
                 await self._logger.aerror(
                     "error on get_objects_around", resp_code=resp.status, resp_text=await resp.text()
@@ -105,10 +104,8 @@ class HTTPUrbanClient(UrbanClient):
         return gdf
 
     @_handle_exceptions
-    async def get_urban_object(
-        self, physical_object_id: int, object_geometry_id: int, service_id: int | None
-    ) -> UrbanObject | None:
-        path = f"/api/v1/urban_objects_by_physical_object?physical_object_id={physical_object_id}"
+    async def get_urban_object(self, urban_object_id: int) -> UrbanObject | None:
+        path = f"/api/v1/urban_objects/{urban_object_id}"
         await self._logger.adebug("executing get_urban_object", path=path)
         async with self._get_session() as session:
             resp = await session.get(path)
@@ -116,9 +113,27 @@ class HTTPUrbanClient(UrbanClient):
                 return None
             if resp.status != 200:
                 await self._logger.aerror(
-                    "error on get_physical_object_geometries", resp_code=resp.status, resp_text=await resp.text()
+                    "error on get_urban_object", resp_code=resp.status, resp_text=await resp.text()
                 )
-                raise InvalidStatusCode(f"Unexpected status code on get_physical_object_geometries: got {resp.status}")
+                raise InvalidStatusCode(f"Unexpected status code on get_urban_object: got {resp.status}")
+            urban_object = UrbanObject.model_validate_json(await resp.text())
+            return urban_object
+
+    @_handle_exceptions
+    async def get_urban_object_by_composite(
+        self, physical_object_id: int, object_geometry_id: int, service_id: int | None
+    ) -> UrbanObject | None:
+        path = f"/api/v1/urban_objects_by_physical_object?physical_object_id={physical_object_id}"
+        await self._logger.adebug("executing get_urban_object_by_composite", path=path)
+        async with self._get_session() as session:
+            resp = await session.get(path)
+            if resp.status == 404:
+                return None
+            if resp.status != 200:
+                await self._logger.aerror(
+                    "error on get_urban_object_by_composite", resp_code=resp.status, resp_text=await resp.text()
+                )
+                raise InvalidStatusCode(f"Unexpected status code on get_urban_object_by_composite: got {resp.status}")
             urban_objects = [UrbanObject.model_validate(entry) for entry in await resp.json()]
         potential: UrbanObject | None = None
         for ub in urban_objects:
