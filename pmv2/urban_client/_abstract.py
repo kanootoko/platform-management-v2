@@ -39,7 +39,21 @@ class UrbanClient(abc.ABC):
         """Get physical objects around given geometry."""
 
     @abc.abstractmethod
-    async def get_urban_object(
+    async def get_urban_object(self, urban_object_id: int) -> UrbanObject | None:
+        """Get urban object by its identifier."""
+
+    @abc.abstractmethod
+    async def patch_urban_object(
+        self,
+        urban_object_id: int,
+        geometry_object_id: int = ...,
+        physical_object_id: int = ...,
+        service_id: int | None = ...,
+    ) -> UrbanObject:
+        """Patch urban_object. If no parameters fiven, does nothing."""
+
+    @abc.abstractmethod
+    async def get_urban_object_by_composite(
         self, physical_object_id: int, object_geometry_id: int, service_id: int | None
     ) -> UrbanObject | None:
         """Get urban object by physical_object_id, object_geometry_id and optional service_id."""

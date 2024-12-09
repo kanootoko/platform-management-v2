@@ -9,15 +9,13 @@ from typing import Any, Awaitable, Callable
 import geopandas as gpd
 import numpy as np
 import pandas as pd
-import pyproj
 import shapely
 import shapely.ops
 import structlog
 
+from pmv2.logic.utils import transform_geometry_4326_to_3857
 from pmv2.urban_client import UrbanClient
 from pmv2.urban_client.models import PostPhysicalObject, UrbanObject, shapely_to_geometry
-
-_crs_transformer = pyproj.Transformer.from_crs(4326, 3857, always_xy=True)
 
 
 class PhysicalObjectsUploader:
@@ -170,7 +168,7 @@ class PhysicalObjectsUploader:
         geometries = await self._urban_client.get_physical_object_geometries(physical_object_id)
         geometries = self._get_intersecting_objects(geometry, geometries)
         geometry_id = geometries.iloc[0]["object_geometry_id"]
-        return await self._urban_client.get_urban_object(physical_object_id, geometry_id, None)
+        return await self._urban_client.get_urban_object_by_composite(physical_object_id, geometry_id, None)
 
     def _get_intersecting_objects(
         self,
@@ -182,7 +180,7 @@ class PhysicalObjectsUploader:
             return objects_around
         around_3857: gpd.GeoDataFrame = objects_around.to_crs(3857)
         around_3857["geometry"] = around_3857["geometry"].buffer(5)
-        geometry_3857 = shapely.ops.transform(_crs_transformer.transform, geometry).buffer(5)
+        geometry_3857 = transform_geometry_4326_to_3857(geometry).buffer(5)
         around_3857 = around_3857[
             (
                 around_3857.intersects(geometry_3857)
