@@ -7,5 +7,7 @@ __pycache__
 *.env
 *.log
 *.yaml
+*.csv
+*.json
 *.pickle
 /tmp
