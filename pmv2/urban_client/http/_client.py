@@ -274,12 +274,17 @@ class HTTPUrbanClient(UrbanClient):
 
     @_handle_exceptions
     async def get_functional_zones(
-        self, territory_id: int, functional_zone_type_id: int | None = None, include_child_territories: bool = True
+        self,
+        territory_id: int,
+        year: int,
+        source: str,
+        functional_zone_type_id: int | None = None,
     ) -> list[FunctionalZone]:
         path = f"/api/v1/territory/{territory_id}/functional_zones"
         params = {
+            "year": year,
+            "source": source,
             "functional_zone_type_id": functional_zone_type_id,
-            "include_child_territories": "true" if include_child_territories else "false",
         }
         await self._logger.adebug("executing get_functional_zones", path=path, params=params)
         async with self._get_session() as session:
@@ -296,7 +301,10 @@ class HTTPUrbanClient(UrbanClient):
         body = functional_zone.model_dump(mode="json")
         await self._logger.adebug("executing upload_functional_zone", body=body)
         async with self._get_session() as session:
-            resp = await session.post("/api/v1/functional_zones", json=body)
+            resp = await session.post(
+                "/api/v1/functional_zones",
+                json=body,
+            )
             if resp.status != 201:
                 await self._logger.aerror(
                     "error on upload_functional_zone", resp_code=resp.status, resp_text=await resp.text()

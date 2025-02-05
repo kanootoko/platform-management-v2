@@ -86,7 +86,11 @@ class UrbanClient(abc.ABC):
 
     @abc.abstractmethod
     async def get_functional_zones(
-        self, territory_id: int, functional_zone_type_id: int | None = None, include_child_territories: bool = True
+        self,
+        territory_id: int,
+        year: int,
+        source: str,
+        functional_zone_type_id: int | None = None,
     ) -> list[FunctionalZone]:
         """Get a list of functional zones for a territory."""
 

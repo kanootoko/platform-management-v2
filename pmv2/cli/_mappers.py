@@ -51,7 +51,7 @@ def get_first_occurance_filter_dict_mapper(keys_lists: list[list[str]]) -> Calla
 
 def get_value_mapper(value: Any) -> tuple[Any, _Callback]:
     """Return given value and empty callback."""
-    return lambda _: value, _empty_callback
+    return lambda _: (value, _empty_callback)
 
 
 def get_attribute_mapper(

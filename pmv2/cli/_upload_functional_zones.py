@@ -13,6 +13,7 @@ import geopandas as gpd
 import structlog
 import yaml
 
+from pmv2.cli import _mappers
 from pmv2.logic.upload_functional_zones import FunctionalZonesUploader
 
 from ._main import Config, main, pass_config
@@ -136,7 +137,10 @@ def upload_file(  # pylint: disable=too-many-arguments,too-many-locals
 
     uploader = FunctionalZonesUploader(
         urban_client,
-        properties_mapper=_get_additionals_properties_mapper({"year": year, "source": source}),
+        properties_mapper=_mappers.full_dictionary_mapper,
+        year_mapper=_mappers.get_value_mapper(year),
+        source_mapper=_mappers.get_value_mapper(source),
+        name_mapper=_mappers.get_attribute_mapper(["name"]),
         logger=config.logger,
     )
     try:
@@ -263,7 +267,10 @@ def upload_bulk(  # pylint: disable=too-many-arguments,too-many-locals
 
     uploader = FunctionalZonesUploader(
         urban_client,
-        properties_mapper=_get_additionals_properties_mapper({"year": year, "source": source}),
+        properties_mapper=_mappers.full_dictionary_mapper,
+        year_mapper=_mappers.get_value_mapper(year),
+        source_mapper=_mappers.get_value_mapper(source),
+        name_mapper=_mappers.get_attribute_mapper(["name"]),
         logger=logger,
     )
 
