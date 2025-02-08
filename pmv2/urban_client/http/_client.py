@@ -18,6 +18,7 @@ from pmv2.urban_client.models import (
     FunctionalZone,
     FunctionalZoneType,
     LivingBuilding,
+    ObjectGeometry,
     PhysicalObjectType,
     PostFunctionalZone,
     PostPhysicalObject,
@@ -120,23 +121,47 @@ class HTTPUrbanClient(UrbanClient):
             return urban_object
 
     @_handle_exceptions
+    async def get_object_geometry(self, object_geometry_id: int) -> ObjectGeometry | None:
+        path = "/api/v1/object_geometries"
+        params = {
+            "object_geometries_ids": object_geometry_id
+        }
+        await self._logger.adebug("executing get_object_geometry", path=path, params=params)
+        async with self._get_session() as session:
+            resp = await session.get(path, params=params)
+            if resp.status == 404:
+                return None
+            if resp.status != 200:
+                await self._logger.aerror(
+                    "error on get_object_geometry", resp_code=resp.status, resp_text=await resp.text()
+                )
+                raise InvalidStatusCode(f"Unexpected status code on get_object_geometry: got {resp.status}")
+            object_geometry = [ObjectGeometry.model_validate(og) for og in await resp.json()][0]
+            return object_geometry
+
+    @_handle_exceptions
     async def patch_urban_object(
         self,
         urban_object_id: int,
-        geometry_object_id: int = ...,
+        object_geometry_id: int = ...,
         physical_object_id: int = ...,
         service_id: int | None = ...,
     ) -> UrbanObject:
-        if geometry_object_id is ... and physical_object_id is ... and service_id is ...:
+        if object_geometry_id is ... and physical_object_id is ... and service_id is ...:
             return await self.get_urban_object(urban_object_id)
-        body = dict(filter(lambda kv: kv[1] is not ..., {
-            "geometry_object_id": geometry_object_id,
-            "physical_object_id": physical_object_id,
-            "service_id": service_id,
-        }))
+        body = dict(
+            filter(
+                lambda kv: kv[1] is not ...,
+                {
+                    "object_geometry_id": object_geometry_id,
+                    "physical_object_id": physical_object_id,
+                    "service_id": service_id,
+                }.items(),
+            )
+        )
         await self._logger.adebug("executing patch_urban_object", body=body, urban_object_id=urban_object_id)
         async with self._get_session() as session:
-            resp = await session.get(f"/api/v1/urban_objects/{urban_object_id}")
+            resp = await session.patch(f"/api/v1/urban_objects/{urban_object_id}", json=body)
             if resp.status == 404:
                 raise ObjectNotFoundError()
             if resp.status != 200:
@@ -146,6 +171,42 @@ class HTTPUrbanClient(UrbanClient):
                 raise InvalidStatusCode(f"Unexpected status code on patch_urban_object: got {resp.status}")
             urban_object = UrbanObject.model_validate_json(await resp.text())
             return urban_object
+
+    @_handle_exceptions
+    async def patch_object_geometry(  # pylint: disable=too-many-arguments
+        self,
+        object_geometry_id: int,
+        geometry: shapely.geometry.base.BaseGeometry = ...,
+        territory_id: int = ...,
+        address: str = ...,
+        osm_id: str = ...,
+    ) -> ObjectGeometry:
+        if geometry is ... and territory_id is ... and address is ... and osm_id is ...:
+            return await self.get_object_geometry(object_geometry_id)
+        body = dict(
+            filter(
+                lambda kv: kv[1] is not ...,
+                {
+                    "object_geometry_id": object_geometry_id,
+                    "geometry": shapely.geometry.mapping(geometry) if geometry is not ... else ...,
+                    "territory_id": territory_id,
+                    "address": address,
+                    "osm_id": osm_id,
+                }.items(),
+            )
+        )
+        await self._logger.adebug("executing patch_object_geometry", body=body, object_geometry_id=object_geometry_id)
+        async with self._get_session() as session:
+            resp = await session.patch(f"/api/v1/object_geometries/{object_geometry_id}", json=body)
+            if resp.status == 404:
+                raise ObjectNotFoundError()
+            if resp.status != 200:
+                await self._logger.aerror(
+                    "error on patch_object_geometry", resp_code=resp.status, resp_text=await resp.text()
+                )
+                raise InvalidStatusCode(f"Unexpected status code on patch_object_geometry: got {resp.status}")
+            object_geometry = ObjectGeometry.model_validate_json(await resp.text())
+            return object_geometry
 
     @_handle_exceptions
     async def get_urban_object_by_composite(

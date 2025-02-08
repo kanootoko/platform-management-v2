@@ -1,28 +1,23 @@
-"""Buildings uploading commands are defined here."""
+"""Urban objects intersections search and geometry objects fixes commands are defined here."""
 
 import asyncio
 import datetime
 import json
 import pickle
 import sys
-from pathlib import Path
 import time
+from pathlib import Path
 from typing import Any
 
 import click
 import pandas as pd
 
-from pmv2.logic.analyze import UrbanObjectsIntersectionMatcher
+from pmv2.logic.duty.analyze import UrbanObjectsIntersectionMatcher
 
-from ._main import Config, main, pass_config
-
-
-@main.group("analyze")
-def analyze_group():
-    """Analyze operations."""
+from . import Config, duty_group, pass_config
 
 
-@analyze_group.command("urban-objects-intersections")
+@duty_group.command("urban-objects-intersections")
 @pass_config
 @click.option(
     "--input-file",
@@ -43,13 +38,13 @@ def analyze_group():
     "output_file",
     type=click.Path(dir_okay=False, writable=True, path_type=Path),
     required=True,
-    help="Output path for matched data",
+    help="Output path for log data",
 )
 @click.option(
     "--output-pickle",
     "output_pickle",
     type=click.Path(dir_okay=False, writable=True, path_type=Path),
-    show_default="analyze_<timestamp>.pickle",
+    show_default="urban_objects_intersections_<timestamp>.pickle",
     help="Output path for analized data pickle file",
 )
 def analyze_urban_objects_intersections(
@@ -65,9 +60,9 @@ def analyze_urban_objects_intersections(
     Useful to map points-buildings to actual uploaded buildings polygons.
     """
     if output_pickle is None:
-        output_pickle = Path(f"analyze_{int(time.time())}.pickle")
+        output_pickle = Path(f"urban_objects_intersections_{int(time.time())}.pickle")
     if output_pickle.is_dir():
-        output_pickle = output_pickle / f"analyze_{int(time.time())}.pickle"
+        output_pickle = output_pickle / f"aurban_objects_intersections_{int(time.time())}.pickle"
     urban_client = config.urban_client
     if not asyncio.run(urban_client.is_alive()):
         print("Urban API at is unavailable, exiting")
@@ -104,7 +99,8 @@ def analyze_urban_objects_intersections(
     with open(output_pickle, "wb") as file:
         pickle.dump(results, file)
 
-@analyze_group.command("update-geometry-objects-ids")
+
+@duty_group.command("update-geometry-objects-ids")
 @pass_config
 @click.option(
     "--input-file",
@@ -127,7 +123,7 @@ def analyze_urban_objects_intersections(
     show_default="analyze_<timestamp>.pickle",
     help="Output path for analized data pickle file",
 )
-def update_geometry_objects_ids(
+def update_object_geometries_ids(
     config: Config,
     *,
     input_file: Path,
@@ -151,16 +147,14 @@ def update_geometry_objects_ids(
         print(f"Could not load input data: {exc!r}")
 
     results: dict[str, Any] = {
-        "type": "update_geometry_object_ids",
+        "type": "update_object_geometry_ids",
         "time_start": datetime.datetime.now(),
         "input_file": str(input_file.resolve()),
     }
 
     updater = UrbanObjectsIntersectionMatcher(config.urban_client, logger=config.logger)
 
-    updated, errors = asyncio.run(
-        updater.update_geometry_ids(to_update, parallel_workers=parallel_workers)
-    )
+    updated, errors = asyncio.run(updater.update_geometry_ids(to_update, parallel_workers=parallel_workers))
 
     results["updated"] = updated
     results["errors"] = errors

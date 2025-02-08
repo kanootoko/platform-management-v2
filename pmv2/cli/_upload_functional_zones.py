@@ -6,7 +6,7 @@ import pickle
 import sys
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import click
 import geopandas as gpd
@@ -212,7 +212,7 @@ def upload_file(  # pylint: disable=too-many-arguments,too-many-locals
     "-o",
     "output_file",
     type=click.Path(writable=True, path_type=Path),
-    show_default="uploaded_one_<timestamp>.pickle",
+    show_default="uploaded_<timestamp>.pickle",
     help="Output path for uploaded services data",
 )
 def upload_bulk(  # pylint: disable=too-many-arguments,too-many-locals
@@ -226,14 +226,11 @@ def upload_bulk(  # pylint: disable=too-many-arguments,too-many-locals
     functional_zone_type_field: str,
     output_file: Path | None,
 ):
-    """Upload a single geojson of services data.
-
-    Do not check if service already exist. If no geometry is found, upload a new physical object of a given type.
-    """
+    """Upload every geojson of services data in a given directory."""
     if output_file is None:
         output_file = Path(f"uploaded_{int(time.time())}.pickle")
     if output_file.is_dir():
-        output_file = output_file / f"uploaded_one_{int(time.time())}.pickle"
+        output_file = output_file / f"uploaded_{int(time.time())}.pickle"
     urban_client = config.urban_client
     logger = config.logger
     if not asyncio.run(urban_client.is_alive()):
@@ -345,14 +342,3 @@ def prepare_names_config(config: Config, names_config: Path):
 
     with names_config.open("w", encoding="utf-8") as file:
         yaml.safe_dump({fzt: fzt for fzt in fz_types_names}, file)
-
-
-def _get_additionals_properties_mapper(
-    additionals: dict[str, Any]
-) -> Callable[[dict[str, Any]], tuple[dict[str, Any], Callable[[dict[str, Any]], None]]]:
-    def mapper(data: dict[str, Any]) -> dict[str, Any]:
-        result = data.copy()
-        result.update(additionals)
-        return result, lambda _: None
-
-    return mapper

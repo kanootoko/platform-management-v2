@@ -2,7 +2,7 @@
 
 import asyncio
 import math
-from typing import Any, Awaitable, Callable, Literal
+from typing import Any, Awaitable, Callable
 import geopandas as gpd
 import numpy as np
 import pandas as pd
@@ -24,6 +24,17 @@ class UrbanObjectsIntersectionMatcher:
         min_intersection_area_to_geometry: float = 0.0,
         logger: structlog.stdlib.BoundLogger = ...,
     ):
+        """Initialize matcher.
+        
+        Parameters:
+            urban_client: UrbanClient: urban client to perform operations
+            min_intersection_area_to_object: float: minimal value of intersection area divided by object area \
+                (used only when both geometries have area)
+            min_intersection_area_to_geometry: float: minimal value of intersection area divided by \
+                other object geometry area (used only when both geometries have area)
+            logger: BoundLogger: structlog logger. If not given, default with name 'urban_objects_intersection_matcher'
+                will be used
+        """
         self._urban_client = urban_client
         self.min_intersection_area_to_object = min_intersection_area_to_object
         self.min_intersection_area_to_geometry = min_intersection_area_to_geometry
@@ -73,13 +84,6 @@ class UrbanObjectsIntersectionMatcher:
     async def find_alternative_geometry_id(self, urban_object_id: int) -> int | None:
         """Check for intersections with other urban_objects with the same type of physical_object
         returning identifier of geometry object if found.
-
-        Parameters:
-            urban_object_id: int: identifier of urban_object to check intersections
-            min_intersection_area_to_object: float: minimal value of intersection area divided by object area \
-                (used only when both geometries have area)
-            min_intersection_area_to_geometry: float: minimal value of intersection area divided by \
-                other object geometry area (used only when both geometries have area)
         """
         urban_object = await self._urban_client.get_urban_object(urban_object_id)
         if urban_object is None:
@@ -111,7 +115,7 @@ class UrbanObjectsIntersectionMatcher:
     async def update_geometry_ids(
         self, uo_geoms: dict[int, int], parallel_workers: int = 1
     ) -> tuple[list[int], list[int] | None]:
-        """Patch urban objects given by id to replace their geometry_object_id with given value"""
+        """Patch urban objects given by id to replace their object_geometry_id with given value"""
         counter = 0
 
         def logging_wrapper(func: Awaitable[Callable[..., Any]]):
@@ -159,7 +163,7 @@ class UrbanObjectsIntersectionMatcher:
             old_object_geometry_id=uo.object_geometry.object_geometry_id,
             new_object_geometry_id=object_geometry_id,
         )
-        await self._urban_client.patch_urban_object(urban_object_id, geometry_object_id=object_geometry_id)
+        await self._urban_client.patch_urban_object(urban_object_id, object_geometry_id=object_geometry_id)
         return True
 
     async def _find_alternative_geometries_batch(
