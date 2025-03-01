@@ -10,6 +10,7 @@ from pmv2.urban_client.models import (
     FunctionalZone,
     FunctionalZoneType,
     LivingBuilding,
+    ObjectGeometry,
     PhysicalObjectType,
     PostFunctionalZone,
     PostPhysicalObject,
@@ -43,14 +44,29 @@ class UrbanClient(abc.ABC):
         """Get urban object by its identifier."""
 
     @abc.abstractmethod
+    async def get_object_geometry(self, object_geometry_id: int) -> ObjectGeometry | None:
+        """Get object_geometry by its identifier."""
+
+    @abc.abstractmethod
     async def patch_urban_object(
         self,
         urban_object_id: int,
-        geometry_object_id: int = ...,
+        object_geometry_id: int = ...,
         physical_object_id: int = ...,
         service_id: int | None = ...,
     ) -> UrbanObject:
         """Patch urban_object. If no parameters fiven, does nothing."""
+
+    @abc.abstractmethod
+    async def patch_object_geometry(  # pylint: disable=too-many-arguments
+        self,
+        object_geometry_id: int,
+        geometry: shapely.geometry.base.BaseGeometry = ...,
+        territory_id: int = ...,
+        address: str = ...,
+        osm_id: str = ...,
+    ) -> ObjectGeometry:
+        """Patch object_geometry. If no parameters fiven, does nothing."""
 
     @abc.abstractmethod
     async def get_urban_object_by_composite(
