@@ -9,8 +9,8 @@ import shapely
 from pmv2.urban_client.models import (
     FunctionalZone,
     FunctionalZoneType,
-    LivingBuilding,
     ObjectGeometry,
+    PhysicalObject,
     PhysicalObjectType,
     PostFunctionalZone,
     PostPhysicalObject,
@@ -89,7 +89,7 @@ class UrbanClient(abc.ABC):
     @abc.abstractmethod
     async def add_living_building(
         self, physical_object_id: int, residents_number: int, living_area: float, properties: dict[str, Any]
-    ) -> LivingBuilding:
+    ) -> PhysicalObject:
         """Add living building to a given physical object
         (which is supposed to have physical object type of living building).
         """

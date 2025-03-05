@@ -2,6 +2,7 @@
 
 import asyncio
 import datetime
+import json
 import pickle
 import sys
 import time
@@ -24,6 +25,7 @@ def buildings_group():
 
 LIVING_BUILDING_NAME = "Жилой дом"
 NON_LIVING_BUILDING_NAME = "Здание"
+NON_LIVING_BUILDING_NAME = "Нежилое здание"
 
 
 @buildings_group.command("upload-file")
@@ -106,14 +108,24 @@ def upload_file(  # pylint: disable=too-many-locals
     }
     gdf: gpd.GeoDataFrame = gpd.read_file(input_file)
     gdf = gdf.drop_duplicates().dropna(subset="geometry").to_crs(4326)
-    print(f"Read file {input_file.name} - {gdf.shape[0]} objects after filtering")
+
+    def try_load_json(value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        try:
+            return json.loads(value)
+        except Exception: # pylint: disable=broad-except
+            return value
+    for column in gdf.columns:
+        gdf[column] = gdf[column].apply(try_load_json)
+
     po_uploader = logic.PhysicalObjectsUploader(
         urban_client,
         po_address_mapper=_mappers.get_attribute_mapper(["address"]),
         po_name_mapper=_mappers.get_func_mapper(
-            ["osm_data"],
-            _mappers.get_string_checker_func(lambda name: f"(Физический объект для здания {name})"),
-            "(Безымянный физический объект)",
+            ["name"],
+            _mappers.get_string_checker_func(lambda name: f"(Здание {name})"),
+            "(Безымянное здание)",
         ),
         po_properties_mapper=_mappers.full_dictionary_mapper,
         logger=config.logger,
@@ -123,8 +135,8 @@ def upload_file(  # pylint: disable=too-many-locals
         po_uploader=po_uploader,
         residents_number_mapper=_mappers.none_mapper,
         living_area_mapper=_mappers.get_attribute_mapper(["living_area"]),
-        living_building_properties_mapper=_mappers.full_dictionary_mapper,
-        po_data_mapper=_mappers.empty_dict_mapper,
+        living_building_properties_mapper=_mappers.empty_dict_mapper,
+        po_data_mapper=_mappers.full_dictionary_mapper,
         logger=logger,
     )
     try:
@@ -144,8 +156,8 @@ def upload_file(  # pylint: disable=too-many-locals
     results["metadata"] = {"total": gdf.shape[0], "uploaded": len(uploaded)}
     config.logger.info("Finished", log_filename=output_file.name)
     results["time_finish"] = datetime.datetime.now()
-    with open(output_file, "wb") as file:
-        pickle.dump(uploaded, file)
+    with output_file.open("wb") as file:
+        pickle.dump(results, file)
 
 
 def _get_physical_object_type_mapping_function(

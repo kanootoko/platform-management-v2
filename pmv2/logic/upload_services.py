@@ -12,6 +12,8 @@ import structlog
 
 from pmv2.logic.upload_physical_objects import PhysicalObjectsUploader
 from pmv2.urban_client import UrbanClient
+from pmv2.urban_client.exceptions import APIConnectionError, APITimeoutError
+from pmv2.urban_client.http.exceptions import InvalidStatusCode
 from pmv2.urban_client.models import PostService, Service
 
 
@@ -53,7 +55,18 @@ class ServicesUploader:
                 nonlocal counter
                 counter += 1
                 await self._logger.adebug("Preparing to upload service", current=counter, total=gdf.shape[0])
-                return await func(*args, **kwargs)
+                attempt = 0
+                while True:
+                    attempt += 1
+                    try:
+                        return await func(*args, **kwargs)
+                    except (APITimeoutError, InvalidStatusCode, APIConnectionError) as exc:
+                        if isinstance(exc, InvalidStatusCode) and "504" not in str(exc):
+                            raise
+                        await self._logger.awarning(
+                            "Suppressing urban_api error, sleeping for 5 seconds", error_type=type(exc), attempt=attempt
+                        )
+                        await asyncio.sleep(5)
 
             return wrapped
 

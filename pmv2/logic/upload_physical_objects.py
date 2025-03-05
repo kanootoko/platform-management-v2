@@ -15,6 +15,8 @@ import structlog
 
 from pmv2.logic.utils import transform_geometry_4326_to_3857
 from pmv2.urban_client import UrbanClient
+from pmv2.urban_client.exceptions import APIConnectionError, APITimeoutError
+from pmv2.urban_client.http.exceptions import InvalidStatusCode
 from pmv2.urban_client.models import PostPhysicalObject, UrbanObject, shapely_to_geometry
 
 
@@ -56,7 +58,18 @@ class PhysicalObjectsUploader:
                 nonlocal counter
                 counter += 1
                 await self._logger.adebug("Preparing to upload physical object", current=counter, total=gdf.shape[0])
-                return await func(*args, **kwargs)
+                attempt = 0
+                while True:
+                    attempt += 1
+                    try:
+                        return await func(*args, **kwargs)
+                    except (APITimeoutError, InvalidStatusCode, APIConnectionError) as exc:
+                        if isinstance(exc, InvalidStatusCode) and "504" not in str(exc):
+                            raise
+                        await self._logger.awarning(
+                            "Suppressing urban_api error, sleeping for 5 seconds", error_type=type(exc), attempt=attempt
+                        )
+                        await asyncio.sleep(5)
 
             return wrapped
 
@@ -161,6 +174,26 @@ class PhysicalObjectsUploader:
                     properties=properties,
                 )
             )
+
+            object_geometry_id = result.object_geometry.object_geometry_id
+            for _, row in self._get_covered_objects(geometry, objects_around).iterrows():
+                await self._logger.adebug(
+                    "Updating covered urban_object geometry", resulting_geometry_id=object_geometry_id
+                )
+                try:
+                    covered_urban_object = await self._urban_client.get_urban_object_by_composite(
+                        row["physical_object_id"], row["object_geometry_id"], None
+                    )
+                    await self._urban_client.patch_urban_object(
+                        covered_urban_object.urban_object_id, object_geometry_id=object_geometry_id
+                    )
+                except Exception as exc:  # pylint: disable=broad-except
+                    await self._logger.awarning(
+                        "Failed to update geometry of covered urban_object",
+                        error=repr(exc),
+                        error_type=type(exc),
+                    )
+
             return result
 
         physical_object_id = intersecting.iloc[0]["physical_object_id"]
@@ -179,17 +212,13 @@ class PhysicalObjectsUploader:
         if objects_around.shape[0] == 0:
             return objects_around
         around_3857: gpd.GeoDataFrame = objects_around.to_crs(3857)
+        if geometry.geom_type != "Point":
+            around_3857 = around_3857[around_3857.geometry.area > 0]
         around_3857["geometry"] = around_3857["geometry"].buffer(5)
         geometry_3857 = transform_geometry_4326_to_3857(geometry).buffer(5)
-        around_3857 = around_3857[
-            (
-                around_3857.intersects(geometry_3857)
-                | around_3857.contains(geometry_3857)
-                | around_3857.covered_by(geometry_3857)
-            )
-        ]
+        around_3857 = around_3857[around_3857.intersects(geometry_3857) | around_3857.contains(geometry_3857.centroid)]
         intersection_area: pd.Series = around_3857.intersection(geometry_3857).area
-        around_3857["intersection"] = np.minimum(
+        around_3857["intersection"] = np.maximum(
             intersection_area / geometry_3857.area, intersection_area / around_3857.area
         )
 
@@ -198,3 +227,13 @@ class PhysicalObjectsUploader:
         intersecting = intersecting[intersecting["intersection"] > intersection_area_boundary]
 
         return intersecting.sort_values("intersection", ascending=False)
+
+    def _get_covered_objects(
+        self, geometry: shapely.geometry.base.BaseGeometry, objects_around: gpd.GeoDataFrame
+    ) -> gpd.GeoDataFrame:
+        around_3857: gpd.GeoDataFrame = objects_around.to_crs(3857)
+        around_3857["geometry"] = around_3857["geometry"]
+        geometry_3857 = transform_geometry_4326_to_3857(geometry).buffer(5)
+
+        around_3857 = around_3857[around_3857.covered_by(geometry_3857) | around_3857.covers(geometry_3857.centroid)]
+        return objects_around[objects_around.index.isin(around_3857.index)]

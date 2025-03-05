@@ -113,13 +113,13 @@ def get_func_mapper(
 
 
 def get_service_capacity_mapper(
-    default_capacity: int,
+    default_capacity: int | None,
 ) -> Callable[[_Data], tuple[int, _Callback]]:
     """Search for a possible names in data dictionary, return value if key is found - otherwise
-    return default capacity and callback to set is_capacity_real=False.
+    return default capacity and callback to set is_capacity_real=False if default_capacity is set to value.
     """
 
-    def service_capacity_mapper(service_data: _Data) -> int:
+    def service_capacity_mapper(service_data: _Data) -> int | None:
         for possible_name in ("capacity", "мощность"):
             if possible_name in service_data:
                 try:
@@ -128,7 +128,9 @@ def get_service_capacity_mapper(
                     continue
                 return capacity, _remove_from_dict_callback(possible_name)
 
-        return default_capacity, _set_value_callback("is_capacity_real", False)
+        if default_capacity is not None:
+            return default_capacity, _set_value_callback("is_capacity_real", False)
+        return None, _empty_callback
 
     return service_capacity_mapper
 

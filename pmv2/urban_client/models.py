@@ -65,6 +65,21 @@ class TerritoryBase(BaseModel):
     name: str
 
 
+class Building(BaseModel):
+    """Living building additional to physical object of corresponding type."""
+
+    id: int
+    properties: dict[str, Any]
+    floors: int | None
+    building_area_official: float | None
+    building_area_modeled: float | None
+    project_type: str | None
+    floor_type: str | None
+    wall_material: str | None
+    built_year: int | None
+    exploitation_start_year: int | None
+
+
 class PhysicalObject(BaseModel):
     """Physical object entity."""
 
@@ -72,18 +87,11 @@ class PhysicalObject(BaseModel):
     physical_object_type: PhysicalObjectType
     name: str | None
     properties: dict[str, Any]
+    building: Building | None
+    territories: list[TerritoryBase] | None
     created_at: datetime.datetime
     updated_at: datetime.datetime
 
-
-class LivingBuilding(BaseModel):
-    """Living building additional to physical object of corresponding type."""
-
-    living_building_id: int
-    physical_object: PhysicalObject
-    residents_number: int | None = None
-    living_area: float | None
-    properties: dict[str, Any]
 
 
 class ObjectGeometry(BaseModel):
@@ -119,7 +127,7 @@ class Service(BaseModel):
     service_type: ServiceType
     territory_type: TerritoryType | None
     name: str | None
-    capacity_real: int | None
+    capacity_real: int | None = None
     properties: dict[str, Any]
     created_at: datetime.datetime
     updated_at: datetime.datetime

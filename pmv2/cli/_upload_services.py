@@ -57,7 +57,6 @@ DEFAULT_NAME_ATTRIBUTES = ["name", "name:ru", "name:en", "description"]
     "--default-capacity",
     "-dc",
     type=int,
-    required=True,
     help="Default capacity of service if not in data",
 )
 @click.option(
@@ -81,7 +80,7 @@ def upload_file(  # pylint: disable=too-many-arguments
     input_file: Path,
     service_type_id: int,
     physical_object_type_id: int,
-    default_capacity: int,
+    default_capacity: int | None,
     parallel_workers: int,
     output_file: Path | None,
 ):
@@ -210,7 +209,6 @@ def upload_bulk(  # pylint: disable=too-many-arguments,too-many-locals,too-many-
         upload_config = UploadConfig.model_validate(yaml.safe_load(file)).transform_to_ids(
             service_types, physical_object_types
         )
-    capacity_dict = {data.service_type_id: data.default_capacity for data in upload_config.filenames.values()}
     logger.info("Prepared upload config", config=upload_config)
 
     results: dict[str, Any] = {
@@ -238,10 +236,6 @@ def upload_bulk(  # pylint: disable=too-many-arguments,too-many-locals,too-many-
         if gdf.shape[0] == 0:
             logger.warning("Empty geojson file, skipping")
             continue
-        if service_type_id not in capacity_dict:
-            logger.critical("Default capacity is not set, skipping")
-            skipped.append(file.name)
-            continue
         po_uploader = PhysicalObjectsUploader(
             urban_client,
             po_address_mapper=_mappers.get_attribute_mapper(["address"]),
@@ -258,7 +252,7 @@ def upload_bulk(  # pylint: disable=too-many-arguments,too-many-locals,too-many-
             po_uploader=po_uploader,
             service_name_mapper=_mappers.get_attribute_mapper(DEFAULT_NAME_ATTRIBUTES, DEFAULT_SERVICE_NAME),
             service_properties_mapper=_mappers.full_dictionary_mapper,
-            service_capacity_mapper=_mappers.get_service_capacity_mapper(capacity_dict[service_type_id]),
+            service_capacity_mapper=_mappers.get_service_capacity_mapper(None),
             logger=logger,
         )
         try:
@@ -314,7 +308,7 @@ def prepare_bulk_config(
     """
     config = UploadConfig(
         filenames={
-            file.name: UploadFileConfig(service_type="___", physical_object_type="___", default_capacity=-1)
+            file.name: UploadFileConfig(service_type="___", physical_object_type="___")
             for file in sorted(input_dir.glob("*.geojson"))
         }
     )
