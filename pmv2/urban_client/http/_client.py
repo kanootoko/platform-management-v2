@@ -17,8 +17,8 @@ from pmv2.urban_client.http.models import Paginated
 from pmv2.urban_client.models import (
     FunctionalZone,
     FunctionalZoneType,
-    LivingBuilding,
     ObjectGeometry,
+    PhysicalObject,
     PhysicalObjectType,
     PostFunctionalZone,
     PostPhysicalObject,
@@ -298,7 +298,7 @@ class HTTPUrbanClient(UrbanClient):
     @_handle_exceptions
     async def add_living_building(
         self, physical_object_id: int, residents_number: int, living_area: float, properties: dict[str, Any]
-    ) -> LivingBuilding:
+    ) -> PhysicalObject:
         body = {
             "physical_object_id": physical_object_id,
             "residents_number": residents_number,
@@ -313,7 +313,7 @@ class HTTPUrbanClient(UrbanClient):
                     "error on add_living_building", resp_code=resp.status, resp_text=await resp.text()
                 )
                 raise InvalidStatusCode(f"Unexpected status code on add_living_building: {resp.status}")
-            result = LivingBuilding.model_validate_json(await resp.text())
+            result = PhysicalObject.model_validate_json(await resp.text())
         return result
 
     @_handle_exceptions

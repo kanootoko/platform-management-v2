@@ -12,6 +12,8 @@ import structlog
 
 from pmv2.logic.upload_physical_objects import PhysicalObjectsUploader
 from pmv2.urban_client import UrbanClient
+from pmv2.urban_client.exceptions import APIConnectionError, APITimeoutError
+from pmv2.urban_client.http.exceptions import InvalidStatusCode
 from pmv2.urban_client.models import UrbanObject
 
 
@@ -61,7 +63,18 @@ class BuildingsUploader:
                 nonlocal counter
                 counter += 1
                 await self._logger.adebug("Preparing to upload building", current=counter, total=gdf.shape[0])
-                return await func(*args, **kwargs)
+                attempt = 0
+                while True:
+                    attempt += 1
+                    try:
+                        return await func(*args, **kwargs)
+                    except (APITimeoutError, InvalidStatusCode, APIConnectionError) as exc:
+                        if isinstance(exc, InvalidStatusCode) and "504" not in str(exc):
+                            raise
+                        await self._logger.awarning(
+                            "Suppressing urban_api error, sleeping for 5 seconds", error_type=type(exc), attempt=attempt
+                        )
+                        await asyncio.sleep(5)
 
             return wrapped
 
@@ -84,6 +97,7 @@ class BuildingsUploader:
 
     async def upload_building(self, full_data: dict[str, Any], physical_object_type_id: int, is_living: bool):
         """Upload a single building of a given physical_object_type and livinglesness."""
+        full_data = full_data.copy()
         geometry: shapely.geometry.base.BaseGeometry = full_data.pop("geometry")
         callbacks = []
 
@@ -108,13 +122,17 @@ class BuildingsUploader:
         for cb in callbacks:
             cb(full_data)
 
-        if is_living:
-            await self._urban_client.add_living_building(
-                result.physical_object.physical_object_id,
-                residents_number=resident_numer,
-                living_area=living_area,
-                properties=lb_properties,
-            )
+        if is_living and result.physical_object.building is None:
+            try:
+                await self._urban_client.add_living_building(
+                    result.physical_object.physical_object_id,
+                    residents_number=resident_numer,
+                    living_area=living_area,
+                    properties=lb_properties,
+                )
+            except InvalidStatusCode as exc:
+                if ": 409" not in str(exc):
+                    raise
         return result
 
     async def _upload_buildings_batch(
