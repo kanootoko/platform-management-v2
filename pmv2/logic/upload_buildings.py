@@ -1,20 +1,34 @@
 """Buildings upload logic is defined here."""
 
 import asyncio
-import itertools
-import math
+import datetime
+import json
+from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
 import geopandas as gpd
 import pandas as pd
-import shapely
 import structlog
 
+from pmv2.logic.sqlite import SQLiteHelper
 from pmv2.logic.upload_physical_objects import PhysicalObjectsUploader
+from pmv2.logic.utils import AlreadyLoggedException, logging_wrapper
 from pmv2.urban_client import UrbanClient
-from pmv2.urban_client.exceptions import APIConnectionError, APITimeoutError
 from pmv2.urban_client.http.exceptions import InvalidStatusCode
 from pmv2.urban_client.models import UrbanObject
+
+
+@dataclass
+class BuildingForUpload:
+    """Building prepared for upload from SQLite database."""
+
+    id: int
+    residents_number: int | None
+    is_living: bool | None
+    living_area: float | None
+    properties: dict[str, Any]
+    physical_object_id: int
+    physical_object_id_external: int
 
 
 class BuildingsUploader:
@@ -24,7 +38,26 @@ class BuildingsUploader:
         self,
         urban_client: UrbanClient,
         *,
+        sqlite: SQLiteHelper,
         po_uploader: PhysicalObjectsUploader,
+        logger: structlog.stdlib.BoundLogger = ...,
+    ):
+        self._urban_client = urban_client
+        self._po_uploader = po_uploader
+        self._sqlite = sqlite
+        if logger is ...:
+            self._logger = structlog.get_logger("upload_buildings")
+        else:
+            self._logger = logger
+        self._helper = BuildingsHelper(sqlite, self._logger)
+        self._helper.prepare_db()
+
+    async def prepare_buildings(  # pylint: disable=too-many-arguments,too-many-locals
+        self,
+        gdf: gpd.GeoDataFrame,
+        *,
+        filename: str,
+        physical_object_type_mapper: Callable[[dict[str, Any]], tuple[int, bool | None]],
         residents_number_mapper: Callable[[dict[str, Any]], tuple[int | None, Callable[[dict[str, Any]], None]]],
         living_area_mapper: Callable[[dict[str, Any]], tuple[float | None, Callable[[dict[str, Any]], None]]],
         living_building_properties_mapper: Callable[
@@ -33,134 +66,259 @@ class BuildingsUploader:
         po_data_mapper: (
             Callable[[dict[str, Any]], tuple[dict[str, Any], Callable[[dict[str, Any]], None]]] | None
         ) = None,
-        logger: structlog.stdlib.BoundLogger = ...,
-    ):
-        self._urban_client = urban_client
-        self._po_uploader = po_uploader
-        self._residents_number_mapper = residents_number_mapper
-        self._living_area_mapper = living_area_mapper
-        self._lb_properties_mapper = living_building_properties_mapper
-        if po_data_mapper is None:
-            self._po_data_mapper = lambda x: x
-        else:
-            self._po_data_mapper = po_data_mapper
-        if logger is ...:
-            self._logger = structlog.get_logger("upload_buildings")
-        else:
-            self._logger = logger
+        po_address_mapper: Callable[[dict[str, Any]], tuple[str, Callable[[dict[str, Any]], None]]],
+        po_name_mapper: Callable[[dict[str, Any]], tuple[str, Callable[[dict[str, Any]], None]]],
+        po_properties_mapper: Callable[[dict[str, Any]], tuple[dict[str, Any], Callable[[dict[str, Any]], None]]],
+    ) -> list[int]:
+        """Insert buildings+physical_objects with a physical_object_type_id set by mapper in the SQLite database."""
+        now = datetime.datetime.now()
 
-    async def upload_buildings(  # pylint: disable=too-many-arguments
-        self,
-        gdf: gpd.GeoDataFrame,
-        physical_object_type_mapper: Callable[[dict[str, Any]], tuple[int, bool | None]],
-        parallel_workers: int = 1,
-    ) -> tuple[list[UrbanObject], gpd.GeoDataFrame | None]:
-        """Upload GeoDataFrame of buildings with physical object type decided by mapper function."""
-        counter = 0
+        physical_objects_data: list[dict[str, Any]] = []
+        buildings_data: list[dict[str, Any]] = []
 
-        def logging_wrapper(func: Awaitable[Callable[..., Any]]):
-            async def wrapped(*args, **kwargs) -> Any:
-                nonlocal counter
-                counter += 1
-                await self._logger.adebug("Preparing to upload building", current=counter, total=gdf.shape[0])
-                attempt = 0
-                while True:
-                    attempt += 1
-                    try:
-                        return await func(*args, **kwargs)
-                    except (APITimeoutError, InvalidStatusCode, APIConnectionError) as exc:
-                        if isinstance(exc, InvalidStatusCode) and "504" not in str(exc):
-                            raise
-                        await self._logger.awarning(
-                            "Suppressing urban_api error, sleeping for 5 seconds", error_type=type(exc), attempt=attempt
-                        )
-                        await asyncio.sleep(5)
+        for _, full_series in gdf.iterrows():
+            full_data = full_series.dropna().to_dict()
+            physical_object_type_id, is_living = physical_object_type_mapper(full_data)
 
-            return wrapped
-
-        part_size = math.ceil(gdf.shape[0] / parallel_workers)
-        gdfs = [gdf.iloc[i : i + part_size] for i in range(0, gdf.shape[0], part_size)]
-        workers = [
-            self._upload_buildings_batch(part, physical_object_type_mapper, logging_wrapper(self.upload_building))
-            for part in gdfs
-        ]
-
-        results = await asyncio.gather(*workers)
-        uploaded_buildings = list(itertools.chain.from_iterable(t[0] for t in results))
-        error_gdfs = [t[1] for t in results if t[1] is not None]
-        if len(error_gdfs) > 0:
-            errors = pd.concat(error_gdfs)
-        else:
-            errors = None
-        await self._logger.ainfo("Finished buildings upload", total=gdf.shape[0], successful=len(uploaded_buildings))
-        return uploaded_buildings, errors
-
-    async def upload_building(self, full_data: dict[str, Any], physical_object_type_id: int, is_living: bool):
-        """Upload a single building of a given physical_object_type and livinglesness."""
-        full_data = full_data.copy()
-        geometry: shapely.geometry.base.BaseGeometry = full_data.pop("geometry")
-        callbacks = []
-
-        resident_numer, cb = self._residents_number_mapper(full_data)
-        callbacks.append(cb)
-        living_area, cb = self._living_area_mapper(full_data)
-        callbacks.append(cb)
-        lb_properties, cb = self._lb_properties_mapper(full_data)
-        callbacks.append(cb)
-        physical_object_data, cb = self._po_data_mapper(full_data)
-        callbacks.append(cb)
-
-        result = await self._po_uploader.upload_physical_object_if_not_exists(
-            geometry=geometry,
-            physical_object_type_id=physical_object_type_id,
-            physical_object_data=physical_object_data,
-        )
-        if result is None:
-            self._logger.warning("Building has no territory parent. Skipping...", data=full_data)
-            return None
-
-        for cb in callbacks:
+            physical_object_data, cb = po_data_mapper(full_data)
+            physical_object_data["physical_object_type_id"] = physical_object_type_id
+            physical_objects_data.append(physical_object_data)
             cb(full_data)
 
-        if is_living and result.physical_object.building is None:
+            full_data["is_living"] = is_living
+            buildings_data.append(full_data)
+
+        po_gdf = pd.DataFrame(physical_objects_data)
+        po_gdf = gpd.GeoDataFrame(po_gdf, geometry="geometry", crs=gdf.crs)
+
+        def physical_object_type_id_mapper(data: dict[str, Any]) -> tuple[int, Callable[[dict[str, Any]], None]]:
+            def remove(data_again: dict[str, Any]) -> None:
+                del data_again["physical_object_type_id"]
+
+            return data["physical_object_type_id"], remove
+
+        self._logger.debug("preparing physical_objects")
+
+        physical_object_ids = await self._po_uploader.prepare_physical_objects(
+            po_gdf,
+            filename=filename,
+            physical_object_type_id_mapper=physical_object_type_id_mapper,
+            address_mapper=po_address_mapper,
+            name_mapper=po_name_mapper,
+            properties_mapper=po_properties_mapper,
+        )
+
+        to_insert: list[dict[str, Any]] = []
+
+        for building_data, physical_object_id in zip(buildings_data, physical_object_ids):
+            callbacks = []
+            residents_number, cb = residents_number_mapper(building_data)
+            callbacks.append(cb)
+            living_area, cb = living_area_mapper(building_data)
+            callbacks.append(cb)
+            is_living = building_data.pop("is_living")
+
+            for cb in callbacks:
+                cb(building_data)
+            properties, cb = living_building_properties_mapper(building_data)
+            cb(building_data)
+
+            to_insert.append(
+                {
+                    "is_living": is_living,
+                    "residents_number": residents_number,
+                    "living_area": living_area,
+                    "properties": properties,
+                    "added_at": now,
+                    "physical_object_id": physical_object_id,
+                    "filename": filename,
+                }
+            )
+
+        self._logger.debug("preparing buildings")
+
+        inserted_ids = self._sqlite.insert_many(
+            "buildings_data",
+            data=to_insert,
+            returning="id",
+            columns=[
+                "is_living",
+                "residents_number",
+                "living_area",
+                "properties",
+                "added_at",
+                "physical_object_id",
+                "filename",
+            ],
+        )
+
+        return inserted_ids
+
+    async def upload_buildings(self, parallel_workers: int = 1) -> tuple[list[UrbanObject], gpd.GeoDataFrame | None]:
+        """Upload buildings from SQLite database in `parallel_workers` async workers."""
+        total = self._helper.get_total()
+
+        upload_func = logging_wrapper(
+            self._logger, total, "preparing to upload building", self.upload_building_if_not_exists
+        )
+        workers = [self._uploading_worker_func(upload_func, worker_name=f"{i}") for i in range(parallel_workers)]
+
+        await asyncio.gather(*workers)
+
+    async def upload_building_if_not_exists(self, building: BuildingForUpload) -> tuple[UrbanObject, bool]:
+        """Upload a building after checking that it does not exist - or return existing one."""
+        result = await self._po_uploader.upload_one_if_not_exists(building.physical_object_id)
+        if result is None:
+            self._logger.warning("building has no territory parent", id=building.id)
+            return None
+        urban_object, _ = result
+
+        if building.is_living and urban_object.physical_object.building is None:
             try:
                 await self._urban_client.add_living_building(
-                    result.physical_object.physical_object_id,
-                    residents_number=resident_numer,
-                    living_area=living_area,
-                    properties=lb_properties,
+                    urban_object.physical_object.physical_object_id,
+                    residents_number=building.residents_number,
+                    living_area=building.living_area,
+                    properties=building.properties,
                 )
             except InvalidStatusCode as exc:
                 if ": 409" not in str(exc):
                     raise
         return result
 
-    async def _upload_buildings_batch(
+    async def _uploading_worker_func(
         self,
-        gdf: gpd.GeoDataFrame,
-        physical_object_type_mapper: Callable[[dict[str, Any]], tuple[int, bool | None]],
-        upload_building: Awaitable[Callable[[dict[str, Any], int, bool], UrbanObject | None]] = ...,
-        max_errors: int | None = None,
-    ) -> tuple[list[UrbanObject], gpd.GeoDataFrame | None]:
-        if upload_building is ...:
-            upload_building = self.upload_building
-        uploaded_buildings = []
-        errors = []
-        for idx, data_series in gdf.iterrows():
+        upload_building: Callable[[BuildingForUpload], Awaitable[tuple[UrbanObject, bool] | None]],
+        worker_name: str | None = None,
+    ) -> None:
+        worker_logger = self._logger
+        if worker_name is not None:
+            worker_logger = worker_logger.bind(worker=worker_name)
+        while True:
             try:
-                full_data = data_series.dropna().to_dict()
-                physical_object_type_id, is_living = physical_object_type_mapper(full_data)
-                uploaded = await upload_building(data_series.dropna().to_dict(), physical_object_type_id, is_living)
-                if uploaded is not None:
-                    uploaded_buildings.append(uploaded)
-            except Exception:  # pylint: disable=broad-except
-                self._logger.exception("Error on building upload", physical_object_data=full_data)
-                errors.append(idx)
-                if max_errors is not None and len(errors) >= max_errors:
-                    self._logger.error("Finishing uploading worker because or errors rate", errors=len(errors))
-                    break
+                building = self._helper.get_row_for_upload()
+                if building is None:
+                    worker_logger.info("no more buildings to upload, finishing")
+                    return
+            except Exception as exc:  # pylint: disable=broad-except
+                if not isinstance(exc, AlreadyLoggedException):
+                    worker_logger.exception("error on upload")
+                continue
+            try:
+                result = await upload_building(building)
+                if result is None:
+                    self._helper.set_upload_error(building.id, "impossible to upload", non_retryable=True)
+                    continue
+                urban_object, new_uploaded = result
             except KeyboardInterrupt:
-                await self._logger.awarning("Got interruption signal, finising")
-                break
-        errors_gdf = gdf.loc[errors] if len(errors) > 0 else None
-        return uploaded_buildings, errors_gdf
+                worker_logger.info("finishing on interruption")
+                return
+            except Exception as exc:  # pylint: disable=broad-except
+                self._helper.set_upload_error(building.id, repr(exc))
+                if not isinstance(exc, AlreadyLoggedException):
+                    worker_logger.exception("error on upload")
+                continue
+            self._helper.set_upload_result(
+                building.id, urban_object.physical_object.physical_object_id, not new_uploaded
+            )
+
+
+class BuildingsHelper:
+    """Class which helps to upload buildings."""
+
+    def __init__(self, sqlite: SQLiteHelper, logger: structlog.stdlib.BoundLogger):
+        self._sqlite = sqlite
+        self._logger = logger
+
+    def prepare_db(self) -> None:
+        "Prepare SQLite database. Note: PhysicalObjectsHelper preparation should come before BuildingsHelper's."
+
+        self._sqlite.execute(
+            "CREATE TABLE IF NOT EXISTS buildings_data ("
+            "   id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "   filename TEXT NOT NULL,"
+            "   added_at TIMESTAMPTZ,"
+            "   locked_till TIMESTAMPTZ,"
+            "   is_living BOOLEAN,"
+            "   residents_number INTEGER,"
+            "   living_area FLOAT,"
+            "   properties TEXT,"
+            "   physical_object_id INTEGER REFERENCES physical_objects_data(id),"
+            "   already_existed BOOLEAN,"
+            "   error TEXT,"
+            "   retry_count INTEGER DEFAULT 0,"
+            "   building_id INTEGER"
+            ")"
+        )
+
+    def get_row_for_upload(self) -> BuildingForUpload | None:
+        """Select a building ready to be uploaded and set its locked_till 5 minutes to future."""
+        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        results = self._sqlite.select(
+            "buildings_data b JOIN physical_objects_data po ON b.physical_object_id = po.id",
+            columns=[
+                "b.id",
+                "b.is_living",
+                "b.residents_number",
+                "b.living_area",
+                "b.properties",
+                "po.id",
+                "po.physical_object_id",
+            ],
+            where=f"b.building_id IS NULL AND (b.locked_till IS NULL OR b.locked_till < '{now}')",
+            order_by="b.retry_count, b.added_at, b.locked_till",
+            limit=1,
+        )
+        if len(results) == 0:
+            return None
+        result = results[0]
+        self._sqlite.update(
+            "buildings_data",
+            where=f"id = {result['b.id']}",
+            non_quoted_set="retry_count = retry_count + 1",
+            locked_till=datetime.datetime.now() + datetime.timedelta(minutes=5),
+        )
+        try:
+            if isinstance(result["b.properties"], str):
+                result["b.properties"] = json.loads(result["b.properties"])
+        except Exception as exc:
+            self._logger.exception("Error on getting building from SQLite", id=result["id"])
+            self.set_upload_error(result["id"], f"Error on get: {repr(exc)}")
+            raise AlreadyLoggedException() from exc
+        return BuildingForUpload(
+            id=result["b.id"],
+            residents_number=result["b.residents_number"],
+            is_living=result["b.is_living"],
+            living_area=result["b.living_area"],
+            properties=result["b.properties"],
+            physical_object_id=result["po.id"],
+            physical_object_id_external=result["po.physical_object_id"],
+        )
+
+    def set_upload_result(self, building_id: int, external_id: int, already_existed: bool):
+        """Set building id after uploading."""
+        self._sqlite.update(
+            "buildings_data",
+            where=f"id = {building_id}",
+            building_id=external_id,
+            already_existed=already_existed,
+        )
+
+    def set_upload_error(self, building_id: int, error: str, non_retryable: bool = False):
+        """Set error message for the given building. `non_retryable` flag will also move
+        locked_till 5 days to future.
+        """
+        to_update = {"error": error}
+        if non_retryable:
+            to_update["locked_till"] = datetime.datetime.now() + datetime.timedelta(days=5)
+        self._sqlite.update("buildings_data", where=f"id = {building_id}", **to_update)
+
+    def get_total(self) -> int:
+        """Return total number of buildings ready to be uploaded at the moment."""
+        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        results = self._sqlite.select(
+            "buildings_data",
+            columns=["count(*)"],
+            where=f"building_id IS NULL AND (locked_till IS NULL OR locked_till < '{now}')",
+        )
+        return results[0]["count(*)"]

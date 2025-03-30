@@ -12,7 +12,7 @@ from typing import Any
 import click
 import pandas as pd
 
-from pmv2.logic.duty.analyze import UrbanObjectsIntersectionMatcher
+from pmv2.logic.duty.intersections import UrbanObjectsIntersectionMatcher
 
 from . import Config, duty_group, pass_config
 
@@ -94,7 +94,7 @@ def analyze_urban_objects_intersections(
     results["matched"] = matched
     results["errors"] = errors
     results["metadata"] = {"total": len(urban_object_ids), "matched": len(matched)}
-    config.logger.info("Finished", log_filename=output_pickle.name)
+    config.logger.info("finished", log_filename=output_pickle.name)
     results["time_finish"] = datetime.datetime.now()
     with open(output_pickle, "wb") as file:
         pickle.dump(results, file)
@@ -159,7 +159,7 @@ def update_object_geometries_ids(
     results["updated"] = updated
     results["errors"] = errors
     results["metadata"] = {"total": len(to_update), "matched": len(updated)}
-    config.logger.info("Finished", log_filename=output_pickle.name)
+    config.logger.info("finished", log_filename=output_pickle.name)
     results["time_finish"] = datetime.datetime.now()
     with open(output_pickle, "wb") as file:
         pickle.dump(results, file)

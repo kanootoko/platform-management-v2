@@ -1,10 +1,12 @@
-"""analyze command locic is located here."""
+"""remap-geometry-objects command locic is located here."""
 
 import asyncio
 import math
-from typing import Any, Awaitable, Callable
+from typing import Awaitable, Callable
+
 import structlog
 
+from pmv2.logic.utils import logging_wrapper
 from pmv2.urban_client._abstract import UrbanClient
 from pmv2.urban_client.exceptions import ObjectNotFoundError
 
@@ -29,27 +31,18 @@ class GeometryObjectsTerritoryMapper:
         """Try to find a correct territory for each of the given object_geometries
         using given number of parallel workers.
         """
-        counter = 0
-
-        def logging_wrapper(func: Awaitable[Callable[..., Any]]):
-            async def wrapped(*args, **kwargs) -> Any:
-                nonlocal counter
-                counter += 1
-                await self._logger.adebug(
-                    "preparing to remap object_geometry", current=counter, total=len(object_geometry_ids)
-                )
-                try:
-                    return await func(*args, **kwargs)
-                except Exception as exc:
-                    await self._logger.aexception("error on remapping", current=counter)
-
-            return wrapped
 
         part_size = math.ceil(len(object_geometry_ids) / parallel_workers)
         parts = [object_geometry_ids[i : i + part_size] for i in range(0, len(object_geometry_ids), part_size)]
         workers = [
             self._remap_object_geometries_to_territories_batch(
-                part, logging_wrapper(self.remap_object_geometry_territory)
+                part,
+                logging_wrapper(
+                    self._logger,
+                    len(object_geometry_ids),
+                    "preparing to remap object_geometry",
+                    self.remap_object_geometry_territory,
+                ),
             )
             for part in parts
         ]
@@ -85,7 +78,9 @@ class GeometryObjectsTerritoryMapper:
         if new_territory_id == object_geometry.territory.id:
             return None
 
-        await self._urban_client.patch_object_geometry(object_geometry.object_geometry_id, territory_id=new_territory_id)
+        await self._urban_client.patch_object_geometry(
+            object_geometry.object_geometry_id, territory_id=new_territory_id
+        )
 
         return new_territory_id
 

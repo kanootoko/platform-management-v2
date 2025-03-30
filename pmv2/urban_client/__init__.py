@@ -11,6 +11,17 @@ __all__ = [
 ]
 
 
-def make_http_client(host: str, logger: structlog.stdlib.BoundLogger = ...) -> UrbanClient:
+def make_http_client(
+    host: str,
+    *,
+    ping_timeout_seconds: float = 2.0,
+    operation_timeout_seconds: float = 30.0,
+    logger: structlog.stdlib.BoundLogger = ...,
+) -> UrbanClient:
     """Get HTTP Urban API client."""
-    return HTTPUrbanClient(host, logger)
+    return HTTPUrbanClient(
+        host,
+        ping_timeout_seconds=ping_timeout_seconds,
+        operation_timeout_sconds=operation_timeout_seconds,
+        logger=logger,
+    )

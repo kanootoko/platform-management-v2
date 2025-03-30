@@ -1,15 +1,16 @@
-"""analyze command locic is located here."""
+"""urban-objects-intersections command locic is located here."""
 
 import asyncio
 import math
-from typing import Any, Awaitable, Callable
+from typing import Awaitable, Callable
+
 import geopandas as gpd
 import numpy as np
 import pandas as pd
 import shapely
 import structlog
 
-from pmv2.logic.utils import transform_geometry_4326_to_3857
+from pmv2.logic.utils import logging_wrapper, transform_geometry_4326_to_3857
 from pmv2.urban_client._abstract import UrbanClient
 from pmv2.urban_client.exceptions import ObjectNotFoundError
 
@@ -50,23 +51,18 @@ class UrbanObjectsIntersectionMatcher:
         urban_object_id -> alternative geometry_id and urban objects identifiers which caused an error)
         using given number of parallel workers.
         """
-        counter = 0
-
-        def logging_wrapper(func: Awaitable[Callable[..., Any]]):
-            async def wrapped(*args, **kwargs) -> Any:
-                nonlocal counter
-                counter += 1
-                await self._logger.adebug(
-                    "preparing to find alternative geometry", current=counter, total=len(urban_object_ids)
-                )
-                return await func(*args, **kwargs)
-
-            return wrapped
-
         part_size = math.ceil(len(urban_object_ids) / parallel_workers)
         parts = [urban_object_ids[i : i + part_size] for i in range(0, len(urban_object_ids), part_size)]
         workers = [
-            self._find_alternative_geometries_batch(part, logging_wrapper(self.find_alternative_geometry_id))
+            self._find_alternative_geometries_batch(
+                part,
+                logging_wrapper(
+                    self._logger,
+                    len(urban_object_ids),
+                    "preparing to find alternative geometry",
+                    self.find_alternative_geometry_id,
+                ),
+            )
             for part in parts
         ]
 
@@ -116,24 +112,20 @@ class UrbanObjectsIntersectionMatcher:
         self, uo_geoms: dict[int, int], parallel_workers: int = 1
     ) -> tuple[list[int], list[int] | None]:
         """Patch urban objects given by id to replace their object_geometry_id with given value"""
-        counter = 0
-
-        def logging_wrapper(func: Awaitable[Callable[..., Any]]):
-            async def wrapped(*args, **kwargs) -> Any:
-                nonlocal counter
-                counter += 1
-                await self._logger.adebug(
-                    "preparing to update urban_object's object_geometry_id", current=counter, total=len(uo_geoms)
-                )
-                return await func(*args, **kwargs)
-
-            return wrapped
 
         part_size = math.ceil(len(uo_geoms) / parallel_workers)
         dict_as_list = list(uo_geoms.items())
         parts = [dict(dict_as_list[i : i + part_size]) for i in range(0, len(uo_geoms), part_size)]
         workers = [
-            self._update_geometry_ids_batch(part, logging_wrapper(self.update_urban_object_geometry_id))
+            self._update_geometry_ids_batch(
+                part,
+                logging_wrapper(
+                    self._logger,
+                    len(uo_geoms),
+                    "preparing to update urban_object's object_geometry_id",
+                    self.update_urban_object_geometry_id,
+                ),
+            )
             for part in parts
         ]
 

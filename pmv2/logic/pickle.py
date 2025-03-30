@@ -1,4 +1,4 @@
-"""pickle command logic is defined here"""
+"""pickle command logic (deprecated) is defined here"""
 
 import datetime
 from functools import partial
