@@ -93,7 +93,6 @@ class PhysicalObject(BaseModel):
     updated_at: datetime.datetime
 
 
-
 class ObjectGeometry(BaseModel):
     """Object geometry entity."""
 
@@ -111,6 +110,7 @@ class ServiceType(BaseModel):
 
     service_type_id: int
     name: str
+    code: str
 
 
 class TerritoryType(BaseModel):
@@ -127,7 +127,7 @@ class Service(BaseModel):
     service_type: ServiceType
     territory_type: TerritoryType | None
     name: str | None
-    capacity_real: int | None = None
+    capacity: int | None = None
     properties: dict[str, Any]
     created_at: datetime.datetime
     updated_at: datetime.datetime
@@ -150,7 +150,7 @@ class PostService(BaseModel):
     service_type_id: int
     territory_type_id: int | None
     name: str | None
-    capacity_real: int | None
+    capacity: int | None
     properties: dict[str, Any]
 
 

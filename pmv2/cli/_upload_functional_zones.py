@@ -1,10 +1,10 @@
-"""Services uploading commands are defined here."""
+"""Functional zones uploading commands are defined here."""
 
 import asyncio
 import datetime
-import pickle
+import math
+import sqlite3
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
@@ -14,7 +14,9 @@ import structlog
 import yaml
 
 from pmv2.cli import _mappers
+from pmv2.logic.sqlite import SQLiteHelper
 from pmv2.logic.upload_functional_zones import FunctionalZonesUploader
+from pmv2.logic.utils import read_geojson
 
 from ._main import Config, main, pass_config
 
@@ -24,18 +26,14 @@ def functional_zones_group():
     """Operations with functional zones."""
 
 
-DEFAULT_SERVICE_NAME = "(Сервис без названия)"
-DEFAULT_NAME_ATTRIBUTES = ["name", "name:ru", "name:en", "description"]
-
-
-@functional_zones_group.command("upload-file")
+@functional_zones_group.command("prepare-file")
 @pass_config
 @click.option(
     "--input-file",
     "-i",
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
     required=True,
-    help="Path to input geojson with services",
+    help="Path to input geojson with functional zones",
 )
 @click.option(
     "--names-config",
@@ -61,22 +59,20 @@ DEFAULT_NAME_ATTRIBUTES = ["name", "name:ru", "name:en", "description"]
     "--functional-zone-type-field",
     type=str,
     default="landuse_zon",
-    help="Source of a functional zone",
+    envvar="FUNCTIONAL_ZONE_TYPE_FIELD",
+    show_default=True,
+    show_envvar=True,
+    help="Source of a functional zone attribute",
 )
 @click.option(
-    "--parallel-workers",
-    "-w",
-    type=int,
-    default=1,
-    help="Number of workers to upload services in parallel",
+    "--db-path",
+    type=click.Path(writable=True, path_type=Path),
+    default="db.sqlite",
+    show_default=True,
+    help="Path for SQLite database file for temporary data",
 )
 @click.option(
-    "--output-pickle",
-    "-o",
-    "output_file",
-    type=click.Path(dir_okay=False, writable=True, path_type=Path),
-    show_default="uploaded_one_<timestamp>.pickle",
-    help="Output path for uploaded services data",
+    "--drop-unknown-fz-types", is_flag=True, help="Drop unknown functional_zone types instead of aborting preparations"
 )
 def upload_file(  # pylint: disable=too-many-arguments,too-many-locals
     config: Config,
@@ -85,239 +81,106 @@ def upload_file(  # pylint: disable=too-many-arguments,too-many-locals
     input_file: Path,
     year: int,
     source: str,
-    parallel_workers: int,
     functional_zone_type_field: str,
-    output_file: Path | None,
+    db_path: Path,
+    drop_unknown_fz_types: bool,
 ):
-    """Upload a single geojson of services data.
-
-    Do not check if service already exist. If no geometry is found, upload a new physical object of a given type.
-    """
-    if output_file is None:
-        output_file = Path(f"uploaded_one_{int(time.time())}.pickle")
-    if output_file.is_dir():
-        output_file = output_file / f"uploaded_one_{int(time.time())}.pickle"
+    """Prepare the upload of a single geojson of functional zones data."""
     urban_client = config.urban_client
+    logger = config.logger
+    filename = str(input_file.resolve())
     if not asyncio.run(urban_client.is_alive()):
         print("Urban API at is unavailable, exiting")
         sys.exit(1)
 
     with names_config.open("r", encoding="utf-8") as file:
-        fzt_names_mapping = yaml.safe_load(file)
-
-    def map_fzt_name(s: Any) -> str:
-        if s in fzt_names_mapping:
-            return fzt_names_mapping[s]
-        return str(s)
+        fzt_names_mapping: dict[str, str] = yaml.safe_load(file)
 
     functional_zone_types = asyncio.run(urban_client.get_functional_zone_types())
-    fz_types = {fzt.name: fzt.functional_zone_type_id for fzt in functional_zone_types}
+    actual_fz_types = {fzt.name: fzt.functional_zone_type_id for fzt in functional_zone_types}
 
-    results: dict[str, Any] = {
+    metadata: dict[str, Any] = {
         "type": "upload_functional_zones",
         "time_start": datetime.datetime.now(),
-        "input_file": str(input_file.resolve()),
+        "input_file": filename,
+        "sqlite_database": str(db_path.resolve()),
         "config": {
             "year": year,
             "source": source,
         },
     }
 
-    gdf: gpd.GeoDataFrame = gpd.read_file(input_file)
-    gdf = gdf.drop_duplicates().dropna(subset="geometry").to_crs(4326)
-    print(f"Read file {input_file.name} - {gdf.shape[0]} objects after filtering")
+    sqlite = SQLiteHelper(sqlite3.connect(db_path))
 
-    if functional_zone_type_field not in gdf.columns:
-        print(f"Missing functional_zone_type field: '{functional_zone_type_field}'")
-        sys.exit(1)
-    fzt_file = set(map(map_fzt_name, gdf[functional_zone_type_field]))
-    if len(fzt_file - set(fz_types)) > 0:
-        print("Following functional_zone_type values cannot be mapped:", ", ".join(sorted(fzt_file - set(fz_types))))
-        sys.exit(1)
+    logger.info("reading file", filename=filename)
+    gdf: gpd.GeoDataFrame = read_geojson(input_file)
+    logger.info("file is loaded", number_of_objects=gdf.shape[0])
+
+    gdf = _check_unknown_fz_types(
+        gdf,
+        functional_zone_type_field=functional_zone_type_field,
+        fzt_names_mapping=fzt_names_mapping,
+        actual_fz_types=actual_fz_types,
+        drop_unknown_fz_types=drop_unknown_fz_types,
+        logger=logger,
+    )
 
     uploader = FunctionalZonesUploader(
         urban_client,
-        properties_mapper=_mappers.full_dictionary_mapper,
-        year_mapper=_mappers.get_value_mapper(year),
-        source_mapper=_mappers.get_value_mapper(source),
-        name_mapper=_mappers.get_attribute_mapper(["name"]),
+        sqlite=sqlite,
         logger=config.logger,
     )
-    try:
-        uploaded, errors = asyncio.run(
-            uploader.upload_functional_zones(
-                gdf,
-                functional_zone_type_mapper=lambda d: fz_types[map_fzt_name(d.pop(functional_zone_type_field, None))],
-                parallel_workers=parallel_workers,
-            )
+    ids = asyncio.run(
+        uploader.prepare_functional_zones(
+            gdf,
+            filename=filename,
+            functional_zone_type_id_mapper=_mappers.get_attribute_mapper([functional_zone_type_field], None),
+            year_mapper=_mappers.get_value_mapper(year),
+            source_mapper=_mappers.get_value_mapper(source),
+            name_mapper=_mappers.get_attribute_mapper(["name"]),
+            properties_mapper=_mappers.full_dictionary_mapper,
         )
-    except KeyboardInterrupt:
-        config.logger.error("Got interruption signal, impossible to save results")
-        sys.exit(1)
+    )
 
-    results["uploaded"] = [u.model_dump() for u in uploaded]
-    results["errors"] = errors.to_geo_dict() if errors is not None else None
-    results["metadata"] = {"total": gdf.shape[0], "uploaded": len(uploaded)}
-    config.logger.info("Finished", log_filename=output_file.name)
-    results["time_finish"] = datetime.datetime.now()
-    with open(output_file, "wb") as file:
-        pickle.dump(results, file)
+    metadata["time_finish"] = datetime.datetime.now()
+    metadata["number_of_objects"] = len(ids)
+    logger.info("finished", metadata=metadata)
 
 
-@functional_zones_group.command("upload-bulk")
+@functional_zones_group.command("upload")
 @pass_config
 @click.option(
-    "--directory",
-    "-d",
-    "input_dir",
-    type=click.Path(exists=True, file_okay=False, path_type=Path),
-    required=True,
-    help="Path to input geojson with services",
-)
-@click.option(
-    "--names-config",
-    type=click.Path(exists=True, dir_okay=False, path_type=Path),
-    required=True,
-    help="Path to yaml config to map functional zone types",
-)
-@click.option(
-    "--year",
-    "-y",
-    type=int,
-    required=True,
-    help="Year of functional zone",
-)
-@click.option(
-    "--source",
-    "-s",
-    type=str,
-    required=True,
-    help="Source of a functional zone",
-)
-@click.option(
-    "--functional-zone-type-field",
-    type=str,
-    default="landuse_zon",
-    help="Source of a functional zone",
+    "--db-path",
+    type=click.Path(exists=True, writable=True, path_type=Path),
+    default="db.sqlite",
+    show_default=True,
+    help="Path for SQLite database file with temporary data",
 )
 @click.option(
     "--parallel-workers",
     "-w",
     type=int,
     default=1,
-    help="Number of workers to upload services in parallel",
+    show_default=True,
+    help="Number of workers to upload functional zones in parallel",
 )
-@click.option(
-    "--output-pickle",
-    "-o",
-    "output_file",
-    type=click.Path(writable=True, path_type=Path),
-    show_default="uploaded_<timestamp>.pickle",
-    help="Output path for uploaded services data",
-)
-def upload_bulk(  # pylint: disable=too-many-arguments,too-many-locals
+def upload(
     config: Config,
     *,
-    names_config: Path,
-    input_dir: Path,
-    year: int,
-    source: str,
+    db_path: Path,
     parallel_workers: int,
-    functional_zone_type_field: str,
-    output_file: Path | None,
 ):
-    """Upload every geojson of services data in a given directory."""
-    if output_file is None:
-        output_file = Path(f"uploaded_{int(time.time())}.pickle")
-    if output_file.is_dir():
-        output_file = output_file / f"uploaded_{int(time.time())}.pickle"
-    urban_client = config.urban_client
-    logger = config.logger
-    if not asyncio.run(urban_client.is_alive()):
+    """Execute a functional zones uploading from SQLite database."""
+    if not asyncio.run(config.urban_client.is_alive()):
         print("Urban API at is unavailable, exiting")
         sys.exit(1)
+    urban_client = config.urban_client
+    logger = config.logger
 
-    with names_config.open("r", encoding="utf-8") as file:
-        fzt_names_mapping = yaml.safe_load(file)
+    sqlite = SQLiteHelper(sqlite3.connect(db_path))
 
-    def map_fzt_name(s: Any) -> str:
-        if s in fzt_names_mapping:
-            return fzt_names_mapping[s]
-        return str(s)
-
-    functional_zone_types = asyncio.run(urban_client.get_functional_zone_types())
-    fz_types = {fzt.name: fzt.functional_zone_type_id for fzt in functional_zone_types}
-
-    results: dict[str, Any] = {
-        "type": "upload_functional_zones_bulk",
-        "time_start": datetime.datetime.now(),
-        "input_dir": str(input_dir.resolve()),
-        "config": {
-            "year": year,
-            "source": source,
-        },
-        "uploaded": {},
-        "errors": {},
-        "skipped": [],
-        "metadata": {},
-    }
-
-    uploader = FunctionalZonesUploader(
-        urban_client,
-        properties_mapper=_mappers.full_dictionary_mapper,
-        year_mapper=_mappers.get_value_mapper(year),
-        source_mapper=_mappers.get_value_mapper(source),
-        name_mapper=_mappers.get_attribute_mapper(["name"]),
-        logger=logger,
-    )
-
-    for file in sorted(input_dir.glob("*.geojson")):
-        structlog.contextvars.bind_contextvars(file=file.name)
-        logger.info("Reading file")
-        gdf: gpd.GeoDataFrame = gpd.read_file(file)
-        gdf = gdf.drop_duplicates().dropna(subset="geometry").to_crs(4326)
-        print(f"Read file {file.name} - {gdf.shape[0]} objects after filtering")
-
-        if functional_zone_type_field not in gdf.columns:
-            print(f"Missing functional_zone_type field: '{functional_zone_type_field}'")
-            sys.exit(1)
-        fzt_file = set(map(map_fzt_name, gdf[functional_zone_type_field]))
-        if len(fzt_file - set(fz_types)) > 0:
-            logger.error(
-                "Some functional_zone_type values cannot be mapped skipping file",
-                functional_zones=sorted(fzt_file - set(fz_types)),
-            )
-            results["skipped"].append(file.name)
-            continue
-
-        try:
-            uploaded, errors = asyncio.run(
-                uploader.upload_functional_zones(
-                    gdf,
-                    functional_zone_type_mapper=lambda d: fz_types[
-                        map_fzt_name(d.pop(functional_zone_type_field, None))
-                    ],
-                    parallel_workers=parallel_workers,
-                )
-            )
-        except KeyboardInterrupt:
-            logger.error("Got interruption signal, impossible to save part of results")
-            break
-        except Exception:  # pylint: disable=broad-except
-            results["skipped"].append(file.name)
-            logger.exception("Got exception on processing file, ignoring")
-            continue
-
-        results["uploaded"][file.name] = [u.model_dump() for u in uploaded]
-        if errors is not None:
-            results["errors"][file.name] = errors.to_geo_dict()
-        results["metadata"][file.name] = {"total": gdf.shape[0], "uploaded": len(uploaded)}
-    structlog.contextvars.unbind_contextvars("file")
-
-    logger.info("Finished", log_filename=output_file.name)
-    results["time_finish"] = datetime.datetime.now()
-    with open(output_file, "wb") as file:
-        pickle.dump(results, file)
+    uploader = FunctionalZonesUploader(urban_client, logger=logger, sqlite=sqlite)
+    asyncio.run(uploader.upload_functional_zones(parallel_workers))
 
 
 @functional_zones_group.command("prepare-names-config")
@@ -342,3 +205,49 @@ def prepare_names_config(config: Config, names_config: Path):
 
     with names_config.open("w", encoding="utf-8") as file:
         yaml.safe_dump({fzt: fzt for fzt in fz_types_names}, file)
+
+
+def _check_unknown_fz_types(  # pylint: disable=too-many-arguments
+    gdf: gpd.GeoDataFrame,
+    *,
+    functional_zone_type_field: str,
+    fzt_names_mapping: dict[str, str],
+    actual_fz_types: dict[str, int],
+    drop_unknown_fz_types: bool,
+    logger: structlog.stdlib.BoundLogger,
+) -> gpd.GeoDataFrame:
+    """Check that functional_zone_type column is present, and all of its values mapped through
+    `fzt_names_mapping` (name in file -> name in urban_api) and `actual_fz_types` (name in urban_api -> id in urban_api)
+    are valid.
+
+    If not all of the possible values are present, exit(1) or filter depending on `drop_unknown_fz_types` flag.
+    """
+    if functional_zone_type_field not in gdf.columns:
+        logger.error(
+            "input gdf is missing functional_zone_type field", functional_zone_type_field=functional_zone_type_field
+        )
+        sys.exit(1)
+
+    gdf[functional_zone_type_field] = gdf[functional_zone_type_field].map(lambda fzt: fzt_names_mapping.get(fzt, fzt))
+
+    fzt_in_gdf = set(gdf[functional_zone_type_field].unique())
+    unknown_fz_types = fzt_in_gdf - set(actual_fz_types)
+
+    if len(unknown_fz_types) > 0 and not drop_unknown_fz_types:
+        logger.error(
+            "some functional_zone_type values cannot be mapped", unknowns=sorted(fzt_in_gdf - set(actual_fz_types))
+        )
+        sys.exit(1)
+
+    gdf[functional_zone_type_field] = gdf[functional_zone_type_field].map(
+        lambda fzt: actual_fz_types.get(fzt, math.nan)
+    )
+
+    if len(unknown_fz_types) == 0:
+        return gdf
+
+    gdf.dropna(subset=functional_zone_type_field, inplace=True)
+
+    logger.info("filtered gdf on functional_zone_type values", new_number_of_objects=gdf.shape[0])
+
+    return gdf

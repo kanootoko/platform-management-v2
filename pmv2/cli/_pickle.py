@@ -14,7 +14,7 @@ from ._main import main
 
 @main.group("pickle")
 def pickles_group():
-    """Operation with log-pickles."""
+    """Operation with log-pickles (deprecated)."""
 
 
 @pickles_group.command("preview")

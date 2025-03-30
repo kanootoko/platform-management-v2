@@ -137,7 +137,7 @@ def get_service_capacity_mapper(
 
 def full_dictionary_mapper(upload_data: _Data) -> tuple[_Data, _Callback]:
     """Return full data dictionary and empty callback."""
-    return upload_data, _empty_callback
+    return upload_data.copy(), _empty_callback
 
 
 def get_string_checker_func(func: Callable[[str], str]) -> Callable[[Any], tuple[str | None, bool]]:

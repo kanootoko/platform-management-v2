@@ -12,3 +12,4 @@ __pycache__
 *.pickle
 /tmp
 *.txt
+*.sqlite

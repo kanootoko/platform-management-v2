@@ -25,49 +25,105 @@ executed sequentially for each territory of given level limit (if set).
 
 Print list of correcponding entities (id and name), with sorting available by both attributes.
 
-### services
-
-### prepare-bulk-config
-
-Prepare config for `upload-bulk`.
-
-After creation it should be edited to set correct service_types and physical_object_types.
-
-#### upload-file
-
-Upload a single geojson as a list of services of given service type.
-
-#### upload-bulk
-
-Same for the given directory of geojsons with usage of edited config file.
-
 ### physical-objects
 
-Similar to `services`, it allows to upload physical objects with geometry without service object.
+Section to manipulate physical objects with geometries.
+
+#### prepare-file
+
+Store the given GeoJSON file with services data to the SQLite database for further upload process.
+Multiple files can be stored in a single SQLite file. User can check database information to be sure what data will be uploaded exactly.
+
+Attribute mappers are configured in code and may need some manual tuning.
+
+Example:
+
+```shell
+pmv2 physical-objects prepare-file --db-path ./db.sqlite --physical-object-type Здание -i ./physical_objects.geojson
+```
+
+#### upload
+
+Upload the physical objects from the prepared SQLite database to urban_api.
+Physical_objects are checked for intersection with existing physical_objects on upload.
+If an error happens, it is logged and saved to the SQLite database.
+
+Example:
+
+```shell
+pmv2 physical-objects upload --db-path ./db.sqlite -w 10
+```
+
+### buildings
+
+Section to manipulate buildings (which are physical_objects with optional living_building data).
+
+Firstly designed to upload buildings from OSM + digital city platform + MS buildings project,
+so mappers should be tuned when uploading from a single source.
+
+#### prepare-file
+
+Same as `physical-objects prepare-file`, but user can set `--is_living_field` option.
+
+Example:
+
+```shell
+pmv2 buildings prepare-file -i ./builings.geojson --is-living-field living --db-path ./db.sqlite
+```
+
+#### upload
+
+Same as `physical-objects upload`.
+
+### services
+
+#### prepare-file
+
+Section to manipulate services.
+
+Same as `physical-objects prepare-file`, but user must set `--service-type` (name/code of a service type)
+and `--physical-object-type` (name/id of a physical_object type for cases when physical object is not found
+and should be created too) options.
+
+Example:
+
+```shell
+pmv2 services prepare-file -i "./school.geojson" -s Школа -p "Нежилое здание" --db-path ./db.sqlite
+```
+
+#### upload
+
+Same as `physical-objects upload`.
 
 ### functional-zones
 
-Similar to all above, it allows to upload functional zones to territories.
+Section to manipulate functional_zones.
 
-### pickle
+#### prepare-names-config
 
-Some of the commands produce pickle log-files with results of their work. This group provide basic utility to
-work with those files.
+Create a yaml config with a mapping from names in the functional_zones geojson file to names of functional_zone
+types in urban_api with default urban_api names as keys and values. User then should edit file to set keys as they
+are in the geojson.
 
-#### preview
+#### prepare-file
 
-Preview command can be used to get a look inside pickle without launching python interpreter.
+Same as `physical-objects prepare-file`, but user must set `--names-config` (path to yaml edited config),
+`--year` and `--source` for the file, and can set `--functional-zone-type-field` to redefine attribute to check.
 
-#### export-errors
+`--drop-unknown-fz-types` flag allows to upload only those functional_zones which can be mapped to urban_api. If it is
+not set and such zone exists in a file, then script will fail.
 
-This command can be used to export errors after uploading a single file to a geojson for further research or an upload retry.
+Example:
 
-#### export-errors-bulk
+```shell
+pmv2 functional-zones prepare-file -i './functional_zones.geojson' --db-path ./db.sqlite --names-config ./fzt_names.yaml --year 2025 --source PZZ
 
-Similar to command above, used to export multiple geojsons files with errors after bulk upload.
+```
+
+#### upload
+
+Same as `physical-objects upload`.
 
 ## Caution
 
-1. At the current state, services upload does not check if service already exists in the physical object + geometry,
-nor it checks availability of physical objects around the given geometry
-2. Authentication is not yet supported
+1. Authentication is not yet supported

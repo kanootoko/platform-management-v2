@@ -2,19 +2,17 @@
 
 import asyncio
 import datetime
-import pickle
+import sqlite3
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
 import click
 import geopandas as gpd
-import structlog
-import yaml
 
-from pmv2.logic import upload_physical_objects as logic
-from pmv2.logic.upload_physical_objects_bulk import UploadConfig
+from pmv2.logic.sqlite import SQLiteHelper
+from pmv2.logic.upload_physical_objects import PhysicalObjectsUploader
+from pmv2.logic.utils import read_geojson
 
 from . import _mappers
 from ._main import Config, main, pass_config
@@ -25,7 +23,7 @@ def physical_objects_group():
     """Operations with physical objects."""
 
 
-@physical_objects_group.command("upload-file")
+@physical_objects_group.command("prepare-file")
 @pass_config
 @click.option(
     "--input-file",
@@ -35,95 +33,96 @@ def physical_objects_group():
     help="Path to input geojson with physical objects",
 )
 @click.option(
-    "--physical-object-type-id",
+    "--physical-object-type",
     "-p",
-    type=int,
+    type=str,
     required=True,
-    help="Indentifier of a physical_object type",
+    help="Name/id of a physical_object type",
 )
 @click.option(
-    "--parallel-workers",
-    "-w",
-    type=int,
-    default=1,
-    show_default=True,
-    help="Number of workers to upload physical objects in parallel",
-)
-@click.option(
-    "--output-pickle",
-    "-o",
-    "output_file",
+    "--db-path",
     type=click.Path(writable=True, path_type=Path),
-    show_default="uploaded_one_<timestamp>.pickle",
-    help="Output path for uploaded physical objects data",
+    default="db.sqlite",
+    show_default=True,
+    help="Path for SQLite database file for temporary data",
 )
-def upload_file(
+def prepare_file(
     config: Config,
     *,
     input_file: Path,
-    physical_object_type_id: int,
-    parallel_workers: int,
-    output_file: Path | None,
+    physical_object_type: str,
+    db_path: Path,
 ):
-    """Upload a single geojson of physical objects data."""
-    if output_file is None:
-        output_file = Path(f"uploaded_{int(time.time())}.pickle")
-    if output_file.is_dir():
-        output_file = output_file / f"uploaded_one_{int(time.time())}.pickle"
+    """Prepare the upload of a single geojson of physical objects data."""
     urban_client = config.urban_client
+    logger = config.logger
+    filename = str(input_file.resolve())
+    metadata: dict[str, Any] = {
+        "type": "prepare_physical_objects",
+        "time_start": datetime.datetime.now(),
+        "input_file": filename,
+        "sqlite_database": str(db_path.resolve()),
+        "config": {
+            "physical_object_type": physical_object_type,
+        },
+    }
+
     if not asyncio.run(urban_client.is_alive()):
         print("Urban API at is unavailable, exiting")
         sys.exit(1)
-    results: dict[str, Any] = {
-        "type": "upload_physical_objects",
-        "time_start": datetime.datetime.now(),
-        "input_file": str(input_file.resolve()),
-        "config": {
-            "physical_object_type_id": physical_object_type_id,
-        },
-    }
-    gdf: gpd.GeoDataFrame = gpd.read_file(input_file)
-    gdf = gdf.drop_duplicates().dropna(subset="geometry").to_crs(4326)
-    print(f"Read file {input_file.name} - {gdf.shape[0]} objects after filtering")
-    uploader = logic.PhysicalObjectsUploader(
+
+    po_types = asyncio.run(urban_client.get_physical_object_types())
+    filtered = list(
+        filter(
+            lambda st: st.name == physical_object_type or str(st.physical_object_type_id) == physical_object_type,
+            po_types,
+        )
+    )
+    if len(filtered) != 1:
+        logger.error(
+            "unable to set a physical_object_type_id by name or id",
+            physical_object_type=physical_object_type,
+            filtered_servie_types=filtered,
+        )
+        sys.exit(1)
+    physical_object_type_id = filtered[0].physical_object_type_id
+
+    sqlite = SQLiteHelper(sqlite3.connect(db_path))
+
+    logger.info("reading file", filename=filename)
+    gdf: gpd.GeoDataFrame = read_geojson(input_file)
+    logger.info("file is loaded", number_of_objects=gdf.shape[0])
+
+    uploader = PhysicalObjectsUploader(
         urban_client,
-        po_address_mapper=_mappers.none_mapper,
-        po_name_mapper=_mappers.none_mapper,
-        po_properties_mapper=_mappers.full_dictionary_mapper,
+        sqlite=sqlite,
         logger=config.logger,
     )
-    try:
-        uploaded, errors = asyncio.run(uploader.upload_physical_objects(gdf, physical_object_type_id, parallel_workers))
-    except KeyboardInterrupt:
-        config.logger.error("Got interruption signal, impossible to save results")
-        raise
 
-    results["uploaded"] = [u.model_dump() for u in uploaded]
-    results["errors"] = errors.to_geo_dict() if errors is not None else None
-    results["metadata"] = {"total": gdf.shape[0], "uploaded": len(uploaded)}
-    config.logger.info("Finished", log_filename=output_file.name)
-    results["time_finish"] = datetime.datetime.now()
-    with open(output_file, "wb") as file:
-        pickle.dump(results, file)
+    ids = asyncio.run(
+        uploader.prepare_physical_objects(
+            gdf,
+            filename=filename,
+            physical_object_type_id_mapper=_mappers.get_value_mapper(physical_object_type_id),
+            address_mapper=_mappers.none_mapper,
+            name_mapper=_mappers.none_mapper,
+            properties_mapper=_mappers.full_dictionary_mapper,
+        )
+    )
+
+    metadata["time_finish"] = datetime.datetime.now()
+    metadata["number_of_objects"] = len(ids)
+    logger.info("finished", metadata=metadata)
 
 
-@physical_objects_group.command("upload-bulk")
+@physical_objects_group.command("upload")
 @pass_config
 @click.option(
-    "--directory",
-    "-d",
-    "input_dir",
-    type=click.Path(exists=True, file_okay=False, path_type=Path),
-    required=True,
-    help="Path to input directory with physical objects geojsons",
-)
-@click.option(
-    "--config",
-    "-c",
-    "upload_config_file",
-    type=click.Path(exists=True, dir_okay=False, path_type=Path),
-    required=True,
-    help="Path to bulk upload config yaml file",
+    "--db-path",
+    type=click.Path(exists=True, writable=True, path_type=Path),
+    default="db.sqlite",
+    show_default=True,
+    help="Path for SQLite database file with temporary data",
 )
 @click.option(
     "--parallel-workers",
@@ -133,125 +132,20 @@ def upload_file(
     show_default=True,
     help="Number of workers to upload physical objects in parallel",
 )
-@click.option(
-    "--output-pickle",
-    "-o",
-    "output_file",
-    type=click.Path(writable=True, path_type=Path),
-    show_default="uploaded_<timestamp>.pickle",
-    help="Output path for uploaded physical objects data",
-)
-def upload_bulk(  # pylint: disable=too-many-arguments,too-many-locals
+def upload(
     config: Config,
     *,
-    input_dir: Path,
-    upload_config_file: Path,
+    db_path: Path,
     parallel_workers: int,
-    output_file: Path | None,
 ):
-    """Execute a bulk upload of geojsons of physical objects data."""
-    if output_file is None:
-        output_file = Path(f"uploaded_{int(time.time())}.pickle")
+    """Execute a physical objects uploading from SQLite database."""
     if not asyncio.run(config.urban_client.is_alive()):
         print("Urban API at is unavailable, exiting")
         sys.exit(1)
     urban_client = config.urban_client
     logger = config.logger
 
-    physical_object_types = asyncio.run(urban_client.get_physical_object_types())
+    sqlite = SQLiteHelper(sqlite3.connect(db_path))
 
-    with upload_config_file.open(encoding="utf-8") as file:
-        upload_config = UploadConfig.model_validate(yaml.safe_load(file)).transform_to_ids(physical_object_types)
-
-    logger.info("Prepared upload config", config=upload_config)
-    results: dict[str, Any] = {
-        "type": "upload_physical_objects_bulk",
-        "date": datetime.datetime.now(),
-        "input_dir": str(input_dir.resolve()),
-        "config": upload_config.model_dump(),
-        "uploaded": {},
-        "errors": {},
-        "skipped": [],
-        "metadata": {},
-    }
-    skipped = []
-    for file in sorted(input_dir.glob("*.geojson")):
-        if file.name not in upload_config.filenames:
-            skipped.append(file.name)
-            continue
-        logger.info("Reading file", filename=file.name)
-        gdf: gpd.GeoDataFrame = gpd.read_file(file)
-        gdf = gdf.drop_duplicates().dropna(subset="geometry").to_crs(4326)
-        physical_object_type_id = upload_config.filenames[file.name]
-        structlog.contextvars.bind_contextvars(file=file.name)
-        logger.info("Read file", objects=gdf.shape[0])
-        if gdf.shape[0] == 0:
-            logger.warning("Empty geojson file, skipping")
-            continue
-        uploader = logic.PhysicalObjectsUploader(
-            urban_client,
-            po_address_mapper=_mappers.get_attribute_mapper(["address"]),
-            po_name_mapper=_mappers.get_attribute_mapper(["name"]),
-            po_properties_mapper=_mappers.full_dictionary_mapper,
-            logger=config.logger,
-        )
-        try:
-            uploaded, errors = asyncio.run(
-                uploader.upload_physical_objects(gdf, physical_object_type_id, parallel_workers)
-            )
-        except KeyboardInterrupt:
-            logger.error("Got interruption signal, impossible to save part of results")
-            break
-        except Exception:  # pylint: disable=broad-except
-            logger.exception("Got exception on processing file, ignoring")
-            results["skipped"].append(file.name)
-            continue
-
-        results["uploaded"][file.name] = [s.model_dump() for s in uploaded]
-        if errors is not None:
-            results["errors"][file.name] = errors.to_geo_dict()
-        results["metadata"][file.name] = {
-            "total": gdf.shape[0],
-            "uploaded": len(uploaded),
-        }
-    structlog.contextvars.unbind_contextvars("file")
-
-    if len(skipped) > 0:
-        logger.warning("Skipped some files", filenames=skipped)
-    logger.info("Finished", log_filename=output_file.name)
-    results["time_finish"] = datetime.datetime.now()
-    with open(output_file, "wb") as file:
-        pickle.dump(results, file)
-
-
-@physical_objects_group.command("prepare-bulk-config")
-@click.option(
-    "--directory",
-    "-d",
-    "input_dir",
-    type=click.Path(exists=True, file_okay=False, path_type=Path),
-    required=True,
-    help="Path to input directory with physical objects geojsons",
-)
-@click.option(
-    "--config",
-    "-c",
-    "upload_config_file",
-    type=click.Path(dir_okay=False, path_type=Path),
-    required=True,
-    help="Path to save bulk config yaml file",
-)
-def prepare_bulk_config(
-    input_dir: Path,
-    upload_config_file: Path,
-):
-    """Prepare a config for physical objects bulk upload based on geojsons in the given directory.
-
-    User will need to fill service types (name attribute), default capacities different from -1
-    (null is also acceptable) and physical object types of the physical objects.
-    """
-    config = UploadConfig(
-        filenames={file.name: "(physical object type)" for file in sorted(input_dir.glob("*.geojson"))}
-    )
-    with upload_config_file.open("w", encoding="utf-8") as file:
-        yaml.dump(config.model_dump(), file)
+    uploader = PhysicalObjectsUploader(urban_client, logger=logger, sqlite=sqlite)
+    asyncio.run(uploader.upload_physical_objects(parallel_workers))

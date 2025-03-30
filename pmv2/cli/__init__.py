@@ -2,6 +2,7 @@
 
 import importlib
 from pathlib import Path
+
 from ._main import main
 
 for file in Path(__file__).resolve().parent.glob("*.py"):

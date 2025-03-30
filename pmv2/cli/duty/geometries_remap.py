@@ -13,7 +13,6 @@ import pandas as pd
 
 from pmv2.logic.duty.geometries_remap import GeometryObjectsTerritoryMapper
 
-
 from . import Config, duty_group, pass_config
 
 
@@ -82,7 +81,7 @@ def remap_object_geometries(
     results["mapped"] = remapped
     results["errors"] = errors
     results["metadata"] = {"total": len(object_geometry_ids), "remapped": len(remapped)}
-    config.logger.info("Finished", log_filename=output_pickle.name)
+    config.logger.info("finished", log_filename=output_pickle.name)
     results["time_finish"] = datetime.datetime.now()
 
     with open(output_pickle, "wb") as file:

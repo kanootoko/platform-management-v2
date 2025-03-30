@@ -2,20 +2,18 @@
 
 import asyncio
 import datetime
-import pickle
+import sqlite3
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
 import click
 import geopandas as gpd
-import structlog
-import yaml
 
+from pmv2.logic.sqlite import SQLiteHelper
 from pmv2.logic.upload_physical_objects import PhysicalObjectsUploader
 from pmv2.logic.upload_services import ServicesUploader
-from pmv2.logic.upload_services_bulk import UploadConfig, UploadFileConfig
+from pmv2.logic.utils import read_geojson
 
 from . import _mappers
 from ._main import Config, main, pass_config
@@ -26,11 +24,10 @@ def services_group():
     """Operations with services."""
 
 
-DEFAULT_SERVICE_NAME = "(Сервис без названия)"
 DEFAULT_NAME_ATTRIBUTES = ["name", "name:ru", "name:en", "description"]
 
 
-@services_group.command("upload-file")
+@services_group.command("prepare-file")
 @pass_config
 @click.option(
     "--input-file",
@@ -40,129 +37,131 @@ DEFAULT_NAME_ATTRIBUTES = ["name", "name:ru", "name:en", "description"]
     help="Path to input geojson with services",
 )
 @click.option(
-    "--service-type-id",
+    "--service-type",
     "-s",
-    type=int,
+    type=str,
     required=True,
-    help="Indentifier of a service type",
+    help="Name/code of a service type",
 )
 @click.option(
-    "--physical-object-type-id",
+    "--physical-object-type",
     "-p",
-    type=int,
+    type=str,
     required=True,
-    help="Indentifier of a physical_object type",
+    help="Name/id of a physical_object type for a service",
 )
 @click.option(
-    "--default-capacity",
-    "-dc",
-    type=int,
-    help="Default capacity of service if not in data",
-)
-@click.option(
-    "--parallel-workers",
-    "-w",
-    type=int,
-    default=1,
-    help="Number of workers to upload services in parallel",
-)
-@click.option(
-    "--output-pickle",
-    "-o",
-    "output_file",
+    "--db-path",
     type=click.Path(writable=True, path_type=Path),
-    show_default="uploaded_one_<timestamp>.pickle",
-    help="Output path for uploaded services data",
+    default="db.sqlite",
+    show_default=True,
+    help="Path for SQLite database file for temporary data",
 )
-def upload_file(  # pylint: disable=too-many-arguments
+def upload_file(  # pylint: disable=too-many-locals
     config: Config,
     *,
     input_file: Path,
-    service_type_id: int,
-    physical_object_type_id: int,
-    default_capacity: int | None,
-    parallel_workers: int,
-    output_file: Path | None,
+    service_type: str,
+    physical_object_type: str,
+    db_path: Path,
 ):
-    """Upload a single geojson of services data.
-
-    Do not check if service already exist. If no geometry is found, upload a new physical object of a given type.
-    """
-    if output_file is None:
-        output_file = Path(f"uploaded_one_{int(time.time())}.pickle")
-    if output_file.is_dir():
-        output_file = output_file / f"uploaded_one_{int(time.time())}.pickle"
+    """Prepare the upload of a single geojson of services data."""
     urban_client = config.urban_client
+    logger = config.logger
+    filename = str(input_file.resolve())
+
+    metadata: dict[str, Any] = {
+        "type": "prepare_services",
+        "time_start": datetime.datetime.now(),
+        "input_file": filename,
+        "sqlite_database": str(db_path.resolve()),
+        "config": {
+            "service_type": service_type,
+            "physical_object_type": physical_object_type,
+        },
+    }
+
     if not asyncio.run(urban_client.is_alive()):
         print("Urban API at is unavailable, exiting")
         sys.exit(1)
+    service_types = asyncio.run(urban_client.get_service_types())
+    filtered = list(filter(lambda st: service_type in (st.name, st.code), service_types))
+    if len(filtered) != 1:
+        logger.error(
+            "unable to set a service_type_id by name or code", service_type=service_type, filtered_servie_types=filtered
+        )
+        sys.exit(1)
+    service_type_id = filtered[0].service_type_id
 
-    results: dict[str, Any] = {
-        "type": "upload_services",
-        "time_start": datetime.datetime.now(),
-        "input_file": str(input_file.resolve()),
-        "config": {
-            "service_type_id": service_type_id,
-            "physical_object_type_id": physical_object_type_id,
-            "default_capacity": default_capacity,
-        },
-    }
-    gdf: gpd.GeoDataFrame = gpd.read_file(input_file)
-    gdf = gdf.drop_duplicates().dropna(subset="geometry").to_crs(4326)
-    print(f"Read file {input_file.name} - {gdf.shape[0]} objects after filtering")
+    po_types = asyncio.run(urban_client.get_physical_object_types())
+    filtered = list(
+        filter(
+            lambda st: st.name == physical_object_type or str(st.physical_object_type_id) == physical_object_type,
+            po_types,
+        )
+    )
+    if len(filtered) != 1:
+        logger.error(
+            "unable to set a physical_object_type_id by name or id",
+            physical_object_type=physical_object_type,
+            filtered_servie_types=filtered,
+        )
+        sys.exit(1)
+    physical_object_type_id = filtered[0].physical_object_type_id
+
+    sqlite = SQLiteHelper(sqlite3.connect(db_path))
+
+    logger.info("reading file", filename=filename)
+    gdf: gpd.GeoDataFrame = read_geojson(input_file)
+    logger.info("file is loaded", number_of_objects=gdf.shape[0])
+
     po_uploader = PhysicalObjectsUploader(
         urban_client,
-        po_address_mapper=_mappers.get_attribute_mapper(["address"]),
-        po_name_mapper=_mappers.get_func_mapper(
-            DEFAULT_NAME_ATTRIBUTES,
-            _mappers.get_string_checker_func(lambda name: f"(Физический объект для сервиса {name})"),
-            "(Безымянный физический объект)",
-        ),
-        po_properties_mapper=_mappers.get_first_occurance_filter_dict_mapper([DEFAULT_NAME_ATTRIBUTES]),
-        logger=config.logger,
+        sqlite=sqlite,
+        logger=logger,
     )
     uploader = ServicesUploader(
         urban_client,
+        sqlite=sqlite,
         po_uploader=po_uploader,
-        service_name_mapper=_mappers.get_attribute_mapper(DEFAULT_NAME_ATTRIBUTES, DEFAULT_SERVICE_NAME),
-        service_properties_mapper=_mappers.full_dictionary_mapper,
-        service_capacity_mapper=_mappers.get_service_capacity_mapper(default_capacity),
-        logger=config.logger,
+        logger=logger,
     )
-    try:
-        uploaded, errors = asyncio.run(
-            uploader.upload_services(gdf, service_type_id, physical_object_type_id, parallel_workers)
+
+    ids = asyncio.run(
+        uploader.prepare_services(
+            gdf,
+            filename=filename,
+            service_type_id=service_type_id,
+            physical_object_type_id=physical_object_type_id,
+            service_name_mapper=_mappers.get_attribute_mapper(
+                DEFAULT_NAME_ATTRIBUTES, f"({service_type} без названия)"
+            ),
+            service_properties_mapper=_mappers.full_dictionary_mapper,
+            service_capacity_mapper=_mappers.get_service_capacity_mapper(None),
+            po_address_mapper=_mappers.get_attribute_mapper(["address"]),
+            po_name_mapper=_mappers.get_func_mapper(
+                DEFAULT_NAME_ATTRIBUTES,
+                _mappers.get_string_checker_func(lambda name: f"(Физический объект для сервиса {name})"),
+                "(Безымянный физический объект)",
+            ),
+            po_data_mapper=_mappers.get_first_occurance_filter_dict_mapper([DEFAULT_NAME_ATTRIBUTES, ["geometry"]]),
+            po_properties_mapper=_mappers.empty_dict_mapper,
         )
-    except KeyboardInterrupt:
-        config.logger.error("Got interruption signal, impossible to save results")
-        sys.exit(1)
+    )
 
-    results["uploaded"] = [u.model_dump() for u in uploaded]
-    results["errors"] = errors.to_geo_dict() if errors is not None else None
-    results["metadata"] = {"total": gdf.shape[0], "uploaded": len(uploaded)}
-    config.logger.info("Finished", log_filename=output_file.name)
-    results["time_finish"] = datetime.datetime.now()
-    with open(output_file, "wb") as file:
-        pickle.dump(results, file)
+    metadata["time_finish"] = datetime.datetime.now()
+    metadata["number_of_objects"] = len(ids)
+    logger.info("finished", metadata=metadata)
 
 
-@services_group.command("upload-bulk")
+@services_group.command("upload")
 @pass_config
 @click.option(
-    "--directory",
-    "-d",
-    "input_dir",
-    type=click.Path(exists=True, file_okay=False, path_type=Path),
-    required=True,
-    help="Path to input directory with services geojsons",
-)
-@click.option(
-    "--config",
-    "-c",
-    "upload_config_file",
-    type=click.Path(exists=True, dir_okay=False, path_type=Path),
-    required=True,
-    help="Path to bulk upload config yaml file",
+    "--db-path",
+    type=click.Path(exists=True, writable=True, path_type=Path),
+    default="db.sqlite",
+    show_default=True,
+    help="Path for SQLite database file with temporary data",
 )
 @click.option(
     "--parallel-workers",
@@ -170,147 +169,23 @@ def upload_file(  # pylint: disable=too-many-arguments
     type=int,
     default=1,
     show_default=True,
-    help="Number of workers to upload services in parallel",
+    help="Number of workers to upload physical objects in parallel",
 )
-@click.option(
-    "--output-pickle",
-    "-o",
-    "output_file",
-    type=click.Path(writable=True, path_type=Path),
-    show_default="uploaded_<timestamp>.pickle",
-    help="Output path for uploaded services data",
-)
-def upload_bulk(  # pylint: disable=too-many-arguments,too-many-locals,too-many-statements
+def upload(
     config: Config,
     *,
-    input_dir: Path,
-    upload_config_file: Path,
+    db_path: Path,
     parallel_workers: int,
-    output_file: Path | None,
 ):
-    """Execute a bulk upload of geojsons of services data.
-
-    Do not check if service already exist. If no geometry is found, upload a new physical object of a given type.
-    """
-    if output_file is None:
-        output_file = Path(f"uploaded_{int(time.time())}.pickle")
-    if output_file.is_dir():
-        output_file = output_file / f"uploaded_{int(time.time())}.pickle"
+    """Execute a physical objects uploading from SQLite database."""
     if not asyncio.run(config.urban_client.is_alive()):
         print("Urban API at is unavailable, exiting")
         sys.exit(1)
     urban_client = config.urban_client
     logger = config.logger
 
-    service_types = asyncio.run(urban_client.get_service_types())
-    physical_object_types = asyncio.run(urban_client.get_physical_object_types())
+    sqlite = SQLiteHelper(sqlite3.connect(db_path))
 
-    with upload_config_file.open(encoding="utf-8") as file:
-        upload_config = UploadConfig.model_validate(yaml.safe_load(file)).transform_to_ids(
-            service_types, physical_object_types
-        )
-    logger.info("Prepared upload config", config=upload_config)
-
-    results: dict[str, Any] = {
-        "type": "upload_services_bulk",
-        "time_start": datetime.datetime.now(),
-        "input_dir": str(input_dir.resolve()),
-        "config": upload_config.model_dump(),
-        "uploaded": {},
-        "errors": {},
-        "skipped": [],
-        "metadata": {},
-    }
-    skipped = []
-    for file in sorted(input_dir.glob("*.geojson")):
-        if file.name not in upload_config.filenames:
-            skipped.append(file.name)
-            continue
-        structlog.contextvars.bind_contextvars(file=file.name)
-        logger.info("Reading file")
-        gdf: gpd.GeoDataFrame = gpd.read_file(file)
-        gdf = gdf.drop_duplicates().dropna(subset="geometry").to_crs(4326)
-        service_type_id = upload_config.filenames[file.name].service_type_id
-        physical_object_type_id = upload_config.filenames[file.name].physical_object_type_id
-        logger.info("Read file", objects=gdf.shape[0])
-        if gdf.shape[0] == 0:
-            logger.warning("Empty geojson file, skipping")
-            continue
-        po_uploader = PhysicalObjectsUploader(
-            urban_client,
-            po_address_mapper=_mappers.get_attribute_mapper(["address"]),
-            po_name_mapper=_mappers.get_func_mapper(
-                DEFAULT_NAME_ATTRIBUTES,
-                _mappers.get_string_checker_func(lambda name: f"(Физический объект для сервиса {name})"),
-                "(Безымянный физический объект)",
-            ),
-            po_properties_mapper=_mappers.get_first_occurance_filter_dict_mapper([DEFAULT_NAME_ATTRIBUTES]),
-            logger=config.logger,
-        )
-        uploader = ServicesUploader(
-            urban_client,
-            po_uploader=po_uploader,
-            service_name_mapper=_mappers.get_attribute_mapper(DEFAULT_NAME_ATTRIBUTES, DEFAULT_SERVICE_NAME),
-            service_properties_mapper=_mappers.full_dictionary_mapper,
-            service_capacity_mapper=_mappers.get_service_capacity_mapper(None),
-            logger=logger,
-        )
-        try:
-            uploaded, errors = asyncio.run(
-                uploader.upload_services(gdf, service_type_id, physical_object_type_id, parallel_workers)
-            )
-        except KeyboardInterrupt:
-            logger.error("Got interruption signal, impossible to save part of results")
-            break
-        except Exception:  # pylint: disable=broad-except
-            logger.exception("Got exception on processing file, ignoring")
-            results["skipped"].append(file.name)
-            continue
-        results["uploaded"][file.name] = [u.model_dump() for u in uploaded]
-        if errors is not None:
-            results["errors"][file.name] = errors.to_geo_dict()
-        results["metadata"][file.name] = {"total": gdf.shape[0], "uploaded": len(uploaded)}
-    structlog.contextvars.unbind_contextvars("file")
-
-    if len(skipped) > 0:
-        logger.warning("Skipped some files", filenames=skipped)
-    logger.info("Finished", log_filename=output_file.name)
-    results["time_finish"] = datetime.datetime.now()
-    with open(output_file, "wb") as file:
-        pickle.dump(results, file)
-
-
-@services_group.command("prepare-bulk-config")
-@click.option(
-    "--directory",
-    "-d",
-    "input_dir",
-    type=click.Path(exists=True, file_okay=False, path_type=Path),
-    required=True,
-    help="Path to input directory with services geojsons",
-)
-@click.option(
-    "--config",
-    "-c",
-    "upload_config_file",
-    type=click.Path(dir_okay=False, path_type=Path),
-    required=True,
-    help="Path to save bulk config yaml file",
-)
-def prepare_bulk_config(
-    input_dir: Path,
-    upload_config_file: Path,
-):
-    """Prepare a config for services bulk upload based on geojsons in the given directory.
-
-    User will need to fill service types (name attribute), default capacities different from -1
-    (null is also acceptable) and physical object types of the services.
-    """
-    config = UploadConfig(
-        filenames={
-            file.name: UploadFileConfig(service_type="___", physical_object_type="___")
-            for file in sorted(input_dir.glob("*.geojson"))
-        }
-    )
-    with upload_config_file.open("w", encoding="utf-8") as file:
-        yaml.dump(config.model_dump(), file)
+    po_uploader = PhysicalObjectsUploader(urban_client, sqlite=sqlite, logger=config.logger)
+    uploader = ServicesUploader(urban_client, sqlite=sqlite, po_uploader=po_uploader, logger=logger)
+    asyncio.run(uploader.upload_services(parallel_workers))

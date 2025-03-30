@@ -58,7 +58,7 @@ class UrbanClient(abc.ABC):
         """Patch urban_object. If no parameters fiven, does nothing."""
 
     @abc.abstractmethod
-    async def patch_object_geometry(  # pylint: disable=too-many-arguments
+    async def patch_object_geometry(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
         object_geometry_id: int,
         geometry: shapely.geometry.base.BaseGeometry = ...,
@@ -77,6 +77,12 @@ class UrbanClient(abc.ABC):
     @abc.abstractmethod
     async def get_physical_object_geometries(self, physical_object_id: int) -> gpd.GeoDataFrame:
         """Return geometries of a given physical object."""
+
+    @abc.abstractmethod
+    async def get_physical_object_services(
+        self, physical_object_id: int, service_type_id: int | None = None
+    ) -> list[Service]:
+        """Return services of a given physical object."""
 
     @abc.abstractmethod
     async def get_physical_object_types(self) -> list[PhysicalObjectType]:

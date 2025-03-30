@@ -46,7 +46,14 @@ def _handle_exceptions(func: Callable) -> Callable:
 class HTTPUrbanClient(UrbanClient):
     """Urban API client that uses HTTP/HTTPS as transport."""
 
-    def __init__(self, host: str, logger: structlog.stdlib.BoundLogger = ...):
+    def __init__(
+        self,
+        host: str,
+        *,
+        ping_timeout_seconds: float = 2.0,
+        operation_timeout_sconds: float = 30.0,
+        logger: structlog.stdlib.BoundLogger = ...,
+    ):
         if logger is ...:
             logger = structlog.get_logger()
         if not host.startswith("http"):
@@ -54,12 +61,14 @@ class HTTPUrbanClient(UrbanClient):
             host = f"http://{host}"
         self._host = host
         self._logger = logger.bind(host=self._host)
+        self._ping_timeout = ping_timeout_seconds
+        self._operation_timeout = operation_timeout_sconds
 
     async def is_alive(self) -> bool:
         """Check if Urban API instance is responding."""
         async with self._get_session() as session:
             try:
-                resp = await session.get("/health_check/ping", timeout=10)
+                resp = await session.get("/health_check/ping", timeout=ClientTimeout(self._ping_timeout))
             except ClientConnectionError as exc:
                 await self._logger.awarning("error on ping", error=repr(exc))
                 return False
@@ -123,9 +132,7 @@ class HTTPUrbanClient(UrbanClient):
     @_handle_exceptions
     async def get_object_geometry(self, object_geometry_id: int) -> ObjectGeometry | None:
         path = "/api/v1/object_geometries"
-        params = {
-            "object_geometries_ids": object_geometry_id
-        }
+        params = {"object_geometries_ids": object_geometry_id}
         await self._logger.adebug("executing get_object_geometry", path=path, params=params)
         async with self._get_session() as session:
             resp = await session.get(path, params=params)
@@ -173,7 +180,7 @@ class HTTPUrbanClient(UrbanClient):
             return urban_object
 
     @_handle_exceptions
-    async def patch_object_geometry(  # pylint: disable=too-many-arguments
+    async def patch_object_geometry(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
         object_geometry_id: int,
         geometry: shapely.geometry.base.BaseGeometry = ...,
@@ -256,6 +263,27 @@ class HTTPUrbanClient(UrbanClient):
             df["geometry"] = df["geometry"].apply(shapely.geometry.shape)
             gdf = gpd.GeoDataFrame(df, geometry="geometry", crs=4326)
         return gdf
+
+    @_handle_exceptions
+    async def get_physical_object_services(
+        self, physical_object_id: int, service_type_id: int | None = None
+    ) -> list[Service]:
+        path = f"/api/v1/physical_objects/{physical_object_id}/services"
+        params = {}
+        if service_type_id is not None:
+            params["service_type_id"] = service_type_id
+        await self._logger.adebug("executing get_physical_object_services", path=path, params=params)
+        async with self._get_session() as session:
+            resp = await session.get(path, params=params)
+            if resp.status == 404:
+                return []
+            if resp.status != 200:
+                await self._logger.aerror(
+                    "error on get_physical_object_services", resp_code=resp.status, resp_text=await resp.text()
+                )
+                raise InvalidStatusCode(f"Unexpected status code on get_physical_object_services: got {resp.status}")
+            services = [Service.model_validate(s) for s in await resp.json()]
+            return services
 
     @_handle_exceptions
     async def get_physical_object_types(self) -> list[PhysicalObjectType]:
@@ -418,4 +446,4 @@ class HTTPUrbanClient(UrbanClient):
         return result
 
     def _get_session(self) -> ClientSession:
-        return ClientSession(self._host, timeout=ClientTimeout(20))
+        return ClientSession(self._host, timeout=ClientTimeout(self._operation_timeout))
