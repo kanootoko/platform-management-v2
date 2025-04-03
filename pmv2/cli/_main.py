@@ -126,8 +126,8 @@ def _configure_logging(log_level: _LogLevel, files: dict[str, _LogLevel] | None 
     help="Path to debug log, empty or '-' to disable logging to file",
 )
 def main(  # pylint: disable=too-many-arguments
-    *,
     ctx: click.Context,
+    *,
     host: str,
     log_level: str,
     ping_timeout_seconds: float,
