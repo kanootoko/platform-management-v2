@@ -7,10 +7,13 @@ actual callback call.
 This mappers should be used like an example to create a custom properties mapper for a given input file structure.
 """
 
+from copy import deepcopy
 from typing import Any, Callable
 
 _Data = dict[str, Any]
 _Callback = Callable[[_Data], None]
+
+OSM_ADDRESS_ATTRIBUTES = ["addr:country", "addr:city", "addr:street", "addr:housenumber"]
 
 
 def none_mapper(_: _Data) -> tuple[None, _Callback]:
@@ -58,8 +61,22 @@ def get_attribute_mapper(
     possible_names: list[str],
     default_value: Any = None,
 ) -> tuple[Callable[[_Data], Any], _Callback]:
-    """Search for a possible names in data dictionary, return value and remove its key in callback if key is found.
-    Otherwise return default and empty callback.
+    """Return a function that will search for a possible names in data dictionary, return value and remove its key in
+    callback if key is found - otherwise return default and empty callback.
+
+    Example:
+
+    ```
+    func = get_attribute_mapper(["f", "a", "b"])
+    data = {"a": 1, "b": 2, "c": 3}
+
+    val, cb = func(data)
+    print(val)  # 1
+
+
+    cb(data)
+    print(data)  # {"b": 2, "c": 3}
+    ```
     """
 
     def attribute_mapper(data: _Data) -> Any:
@@ -67,6 +84,42 @@ def get_attribute_mapper(
             value = data.get(possible_name)
             if value:
                 return value, _remove_from_dict_callback(possible_name)
+        return default_value, _empty_callback
+
+    return attribute_mapper
+
+
+def get_attribute_in_dicts_mapper(
+    possible_paths: list[list[str]],
+    default_value: Any = None,
+) -> tuple[Callable[[_Data], Any], _Callback]:
+    """Return a function that will search for a possible names in data dictionary, return value and remove its key in callback if key is found - otherwise return default and empty callback.
+
+    Example:
+
+    ```
+    func = get_attribute_in_dicts_mapper([["a", "bb"], ["a", "aa"], ["b", "aa"]])
+    data = {"a": {"aa": 1}, "b": {"aa": 2}, "c": 3}
+
+    val, cb = func(data)
+    print(val)  # 1
+
+    cb(data)
+    print(data)  # {"a': {}, "b": {"aa": 2}, "c": 3}
+    ```
+    """
+
+    def attribute_mapper(data: _Data) -> Any:
+        for possible_path in possible_paths:
+            edge = data
+            success = True
+            for current_jump in possible_path:
+                if not isinstance(edge, dict) or current_jump not in edge:
+                    success = False
+                    break
+                edge = edge[current_jump]
+            if success:
+                return edge, _remove_from_dicts_callback([possible_path])
         return default_value, _empty_callback
 
     return attribute_mapper
@@ -137,8 +190,7 @@ def get_service_capacity_mapper(
 
 def full_dictionary_mapper(upload_data: _Data) -> tuple[_Data, _Callback]:
     """Return full data dictionary and empty callback."""
-    return upload_data.copy(), _empty_callback
-
+    return deepcopy(upload_data), _empty_callback
 
 def get_string_checker_func(func: Callable[[str], str]) -> Callable[[Any], tuple[str | None, bool]]:
     """Return a function that return string, True and callback based on a given value if it is non-empty string itself.
@@ -152,6 +204,45 @@ def get_string_checker_func(func: Callable[[str], str]) -> Callable[[Any], tuple
 
     return string_checker
 
+def get_osm_address_mapper(inner_field: str | None) -> Callable[[_Data], tuple[int, _Callback]]:
+    def osm_address_mapper(data: _Data) -> int | None:
+        if inner_field is None:
+            osm_data = data
+        elif inner_field not in data:
+            return None, _empty_callback
+        else:
+            osm_data = data[inner_field]
+        current_address = []
+        used_fields = []
+        for attribute in OSM_ADDRESS_ATTRIBUTES:
+            if attribute in osm_data:
+                current_address.append(osm_data[attribute])
+                used_fields.append(attribute)
+        if len(current_address) > 0:
+            if inner_field is not None:
+                used_fields = [[inner_field, field] for field in used_fields]
+            else:
+                used_fields = [[field] for field in used_fields]
+            return ", ".join(current_address), _remove_from_dicts_callback(used_fields)
+        return None, _empty_callback
+    return osm_address_mapper
+
+def get_dictionary_mapper_except_paths(except_paths: list[list[str]]) -> Callable[[_Data], tuple[_Data, _Callback]]:
+    def attribute_mapper(upload_data: _Data) -> tuple[_Data, _Callback]:
+        data = deepcopy(upload_data)
+        for except_path in except_paths:
+            edge = data
+            success = True
+            for current_jump in except_path[:-1]:
+                if not isinstance(edge, dict) or current_jump not in edge:
+                    success = False
+                    break
+                edge = edge[current_jump]
+            if success and isinstance(edge, dict) and except_path[-1] in edge:
+                del edge[except_path[-1]]
+        return data, _empty_callback
+
+    return attribute_mapper
 
 def _empty_callback(_: _Data):
     pass
@@ -161,6 +252,20 @@ def _remove_from_dict_callback(key: str) -> _Callback:
     def remove(data: _Data) -> None:
         if key in data:
             del data[key]
+
+    return remove
+
+
+def _remove_from_dicts_callback(paths: list[list[str]]) -> _Callback:
+    def remove(data: _Data) -> None:
+        for path in paths:
+            edge = data
+            for current_jump in path[:-1]:
+                if not isinstance(edge, dict) or current_jump not in edge:
+                    return
+                edge = data[current_jump]
+            if path[-1] in edge:
+                del edge[path[-1]]
 
     return remove
 

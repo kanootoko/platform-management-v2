@@ -23,9 +23,14 @@ class BuildingForUpload:
     """Building prepared for upload from SQLite database."""
 
     id: int
-    residents_number: int | None
-    is_living: bool | None
-    living_area: float | None
+    floors: int | None
+    building_area_official: float | None
+    building_area_modeled: float | None
+    project_type: str | None
+    floor_type: str | None
+    wall_material: str | None
+    built_year: int | None
+    exploitation_start_year: int | None
     properties: dict[str, Any]
     physical_object_id: int
     physical_object_id_external: int
@@ -58,14 +63,19 @@ class BuildingsUploader:
         *,
         filename: str,
         physical_object_type_mapper: Callable[[dict[str, Any]], tuple[int, bool | None]],
-        residents_number_mapper: Callable[[dict[str, Any]], tuple[int | None, Callable[[dict[str, Any]], None]]],
-        living_area_mapper: Callable[[dict[str, Any]], tuple[float | None, Callable[[dict[str, Any]], None]]],
-        living_building_properties_mapper: Callable[
-            [dict[str, Any]], tuple[dict[str, Any], Callable[[dict[str, Any]], None]]
-        ],
+        floors_mapper: Callable[[dict[str, Any]], tuple[int | None, Callable[[dict[str, Any]], None]]],
+        building_area_official_mapper: Callable[[dict[str, Any]], tuple[float | None, Callable[[dict[str, Any]], None]]],
+        building_area_modeled_mapper: Callable[[dict[str, Any]], tuple[float | None, Callable[[dict[str, Any]], None]]],
+        project_type_mapper: Callable[[dict[str, Any]], tuple[str | None, Callable[[dict[str, Any]], None]]],
+        floor_type_mapper: Callable[[dict[str, Any]], tuple[str | None, Callable[[dict[str, Any]], None]]],
+        wall_material_mapper: Callable[[dict[str, Any]], tuple[str | None, Callable[[dict[str, Any]], None]]],
+        built_year_mapper: Callable[[dict[str, Any]], tuple[int | None, Callable[[dict[str, Any]], None]]],
+        exploitation_start_year_mapper: Callable[[dict[str, Any]], tuple[int | None, Callable[[dict[str, Any]], None]]],
+        building_properties_mapper: Callable[[dict[str, Any]], tuple[dict[str, Any], Callable[[dict[str, Any]], None]]],
         po_data_mapper: (
             Callable[[dict[str, Any]], tuple[dict[str, Any], Callable[[dict[str, Any]], None]]] | None
         ) = None,
+        po_osm_id_mapper: Callable[[dict[str, Any]], tuple[str, Callable[[dict[str, Any]], None]]],
         po_address_mapper: Callable[[dict[str, Any]], tuple[str, Callable[[dict[str, Any]], None]]],
         po_name_mapper: Callable[[dict[str, Any]], tuple[str, Callable[[dict[str, Any]], None]]],
         po_properties_mapper: Callable[[dict[str, Any]], tuple[dict[str, Any], Callable[[dict[str, Any]], None]]],
@@ -78,14 +88,13 @@ class BuildingsUploader:
 
         for _, full_series in gdf.iterrows():
             full_data = full_series.dropna().to_dict()
-            physical_object_type_id, is_living = physical_object_type_mapper(full_data)
+            physical_object_type_id, _ = physical_object_type_mapper(full_data)
 
             physical_object_data, cb = po_data_mapper(full_data)
             physical_object_data["physical_object_type_id"] = physical_object_type_id
             physical_objects_data.append(physical_object_data)
             cb(full_data)
 
-            full_data["is_living"] = is_living
             buildings_data.append(full_data)
 
         po_gdf = pd.DataFrame(physical_objects_data)
@@ -103,6 +112,7 @@ class BuildingsUploader:
             po_gdf,
             filename=filename,
             physical_object_type_id_mapper=physical_object_type_id_mapper,
+            osm_id_mapper=po_osm_id_mapper,
             address_mapper=po_address_mapper,
             name_mapper=po_name_mapper,
             properties_mapper=po_properties_mapper,
@@ -112,22 +122,38 @@ class BuildingsUploader:
 
         for building_data, physical_object_id in zip(buildings_data, physical_object_ids):
             callbacks = []
-            residents_number, cb = residents_number_mapper(building_data)
+            floors, cb = floors_mapper(building_data)
             callbacks.append(cb)
-            living_area, cb = living_area_mapper(building_data)
+            building_area_official, cb = building_area_official_mapper(building_data)
             callbacks.append(cb)
-            is_living = building_data.pop("is_living")
+            building_area_modeled, cb = building_area_modeled_mapper(building_data)
+            callbacks.append(cb)
+            project_type, cb = project_type_mapper(building_data)
+            callbacks.append(cb)
+            floor_type, cb = floor_type_mapper(building_data)
+            callbacks.append(cb)
+            wall_material, cb = wall_material_mapper(building_data)
+            callbacks.append(cb)
+            built_year, cb = built_year_mapper(building_data)
+            callbacks.append(cb)
+            exploitation_start_year, cb = exploitation_start_year_mapper(building_data)
+            callbacks.append(cb)
 
             for cb in callbacks:
                 cb(building_data)
-            properties, cb = living_building_properties_mapper(building_data)
+            properties, cb = building_properties_mapper(building_data)
             cb(building_data)
 
             to_insert.append(
                 {
-                    "is_living": is_living,
-                    "residents_number": residents_number,
-                    "living_area": living_area,
+                    "floors": floors,
+                    "building_area_official": building_area_official,
+                    "building_area_modeled": building_area_modeled,
+                    "project_type": project_type,
+                    "floor_type": floor_type,
+                    "wall_material": wall_material,
+                    "built_year": built_year,
+                    "exploitation_start_year": exploitation_start_year,
                     "properties": properties,
                     "added_at": now,
                     "physical_object_id": physical_object_id,
@@ -142,9 +168,14 @@ class BuildingsUploader:
             data=to_insert,
             returning="id",
             columns=[
-                "is_living",
-                "residents_number",
-                "living_area",
+                "floors",
+                "building_area_official",
+                "building_area_modeled",
+                "project_type",
+                "floor_type",
+                "wall_material",
+                "built_year",
+                "exploitation_start_year",
                 "properties",
                 "added_at",
                 "physical_object_id",
@@ -173,12 +204,18 @@ class BuildingsUploader:
             return None
         urban_object, _ = result
 
-        if building.is_living and urban_object.physical_object.building is None:
+        if urban_object.physical_object.building is None:
             try:
-                await self._urban_client.add_living_building(
+                await self._urban_client.add_building(
                     urban_object.physical_object.physical_object_id,
-                    residents_number=building.residents_number,
-                    living_area=building.living_area,
+                    floors=building.floors,
+                    building_area_official=building.building_area_official,
+                    building_area_modeled=building.building_area_modeled,
+                    project_type=building.project_type,
+                    floor_type=building.floor_type,
+                    wall_material=building.wall_material,
+                    built_year=building.built_year,
+                    exploitation_start_year=building.exploitation_start_year,
                     properties=building.properties,
                 )
             except InvalidStatusCode as exc:
@@ -239,9 +276,14 @@ class BuildingsHelper:
             "   filename TEXT NOT NULL,"
             "   added_at TIMESTAMPTZ,"
             "   locked_till TIMESTAMPTZ,"
-            "   is_living BOOLEAN,"
-            "   residents_number INTEGER,"
-            "   living_area FLOAT,"
+            "   floors INTEGER,"
+            "   building_area_official FLOAT,"
+            "   building_area_modeled FLOAT,"
+            "   project_type TEXT,"
+            "   floor_type TEXT,"
+            "   wall_material TEXT,"
+            "   built_year INTEGER,"
+            "   exploitation_start_year INTEGER,"
             "   properties TEXT,"
             "   physical_object_id INTEGER REFERENCES physical_objects_data(id),"
             "   already_existed BOOLEAN,"
@@ -258,9 +300,14 @@ class BuildingsHelper:
             "buildings_data b JOIN physical_objects_data po ON b.physical_object_id = po.id",
             columns=[
                 "b.id",
-                "b.is_living",
-                "b.residents_number",
-                "b.living_area",
+                "b.floors",
+                "b.building_area_official",
+                "b.building_area_modeled",
+                "b.project_type",
+                "b.floor_type",
+                "b.wall_material",
+                "b.built_year",
+                "b.exploitation_start_year",
                 "b.properties",
                 "po.id",
                 "po.physical_object_id",
@@ -287,10 +334,15 @@ class BuildingsHelper:
             raise AlreadyLoggedException() from exc
         return BuildingForUpload(
             id=result["b.id"],
-            residents_number=result["b.residents_number"],
-            is_living=result["b.is_living"],
-            living_area=result["b.living_area"],
-            properties=result["b.properties"],
+            floors=_try_int(result["b.floors"]),
+            building_area_official=_try_float(result["b.building_area_official"]),
+            building_area_modeled=_try_float(result["b.building_area_modeled"]),
+            project_type=result["b.project_type"],
+            floor_type=result["b.floor_type"],
+            wall_material=result["b.wall_material"],
+            built_year=_try_int(result["b.built_year"]),
+            exploitation_start_year=_try_int(result["b.exploitation_start_year"]),
+            properties=result["b.properties"] or {},
             physical_object_id=result["po.id"],
             physical_object_id_external=result["po.physical_object_id"],
         )
@@ -322,3 +374,19 @@ class BuildingsHelper:
             where=f"building_id IS NULL AND (locked_till IS NULL OR locked_till < '{now}')",
         )
         return results[0]["count(*)"]
+
+def _try_float(val: Any) -> float | None:
+    if val is None:
+        return None
+    try:
+        if isinstance(val, str):
+            return float(val.replace(",", "."))
+        return float(val)
+    except TypeError:
+        return None
+    
+def _try_int(val: Any) -> int | None:
+    float_val = _try_float(val)
+    if float_val is None:
+        return None
+    return int(float_val)

@@ -104,8 +104,9 @@ def prepare_file(
             gdf,
             filename=filename,
             physical_object_type_id_mapper=_mappers.get_value_mapper(physical_object_type_id),
-            address_mapper=_mappers.none_mapper,
-            name_mapper=_mappers.none_mapper,
+            address_mapper=_mappers.get_attribute_mapper(["address"]),
+            osm_id_mapper=_mappers.get_attribute_mapper(["osm_id"]),
+            name_mapper=_mappers.get_attribute_mapper(["name"]),
             properties_mapper=_mappers.full_dictionary_mapper,
         )
     )
@@ -138,7 +139,7 @@ def upload(
     db_path: Path,
     parallel_workers: int,
 ):
-    """Execute a physical objects uploading from SQLite database."""
+    """Upload physical_objects from SQLite database."""
     if not asyncio.run(config.urban_client.is_alive()):
         print("Urban API at is unavailable, exiting")
         sys.exit(1)

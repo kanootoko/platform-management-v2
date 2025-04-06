@@ -60,17 +60,18 @@ def logging_wrapper(
     counting attempts until it reaches `max_attempts` if set."""
     counter = 0
     errors = 0
+    success = 0
 
     async def wrapped(*args, **kwargs):
-        nonlocal counter, errors
-        await logger.adebug(text, current=counter, total=total, errors=errors)
+        nonlocal counter, errors, success
+        counter += 1
+        await logger.adebug(text, current=counter, success=success, total=total, errors=errors)
         attempt = 0
         while True:
             attempt += 1
             try:
-
                 res = await func(*args, **kwargs)
-                counter += 1
+                success += 1
                 return res
             except (InvalidStatusCode, APIConnectionError) as exc:
                 if isinstance(exc, InvalidStatusCode) and "504" not in str(exc):

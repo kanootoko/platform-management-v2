@@ -26,8 +26,9 @@ class PhysicalObjectForUpload:  # pylint: disable=too-many-instance-attributes
 
     id: int
     physical_object_type_id: int
-    address: str
-    name: str
+    osm_id: int | None
+    address: str | None
+    name: str | None
     properties: dict[str, Any]
     geometry: shapely.geometry.base.BaseGeometry
     physical_object_id: int | None
@@ -63,6 +64,7 @@ class PhysicalObjectsUploader:
         *,
         filename: str,
         physical_object_type_id_mapper: Callable[[dict[str, Any]], tuple[int, Callable[[dict[str, Any]], None]]],
+        osm_id_mapper: Callable[[dict[str, Any]], tuple[str, Callable[[dict[str, Any]], None]]],
         address_mapper: Callable[[dict[str, Any]], tuple[str, Callable[[dict[str, Any]], None]]],
         name_mapper: Callable[[dict[str, Any]], tuple[str, Callable[[dict[str, Any]], None]]],
         properties_mapper: Callable[[dict[str, Any]], tuple[dict[str, Any], Callable[[dict[str, Any]], None]]],
@@ -83,6 +85,8 @@ class PhysicalObjectsUploader:
             callbacks.append(cb)
             physical_object_type_id, cb = physical_object_type_id_mapper(po_data)
             callbacks.append(cb)
+            osm_id, cb = osm_id_mapper(po_data)
+            callbacks.append(cb)
 
             for cb in callbacks:
                 cb(po_data)
@@ -91,6 +95,7 @@ class PhysicalObjectsUploader:
 
             to_insert.append(
                 {
+                    "osm_id": osm_id,
                     "address": address,
                     "name": name,
                     "properties": properties,
@@ -105,7 +110,16 @@ class PhysicalObjectsUploader:
             "physical_objects_data",
             data=to_insert,
             returning="id",
-            columns=["address", "name", "properties", "geometry", "physical_object_type_id", "added_at", "filename"],
+            columns=[
+                "osm_id",
+                "address",
+                "name",
+                "properties",
+                "geometry",
+                "physical_object_type_id",
+                "added_at",
+                "filename",
+            ],
         )
 
         return inserted_ids
@@ -179,6 +193,7 @@ class PhysicalObjectsUploader:
                     territory_id=territory_id,
                     physical_object_type_id=physical_object.physical_object_type_id,
                     centre_point=None,
+                    osm_id=physical_object.osm_id,
                     address=physical_object.address,
                     name=physical_object.name,
                     properties=physical_object.properties,
@@ -301,6 +316,7 @@ class PhysicalObjectsHelper:
         self._sqlite.execute(
             "CREATE TABLE IF NOT EXISTS physical_objects_data ("
             "   id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "   osm_id TEXT,"
             "   filename TEXT NOT NULL,"
             "   added_at TIMESTAMPTZ,"
             "   locked_till TIMESTAMPTZ,"
@@ -356,6 +372,7 @@ class PhysicalObjectsHelper:
             columns=[
                 "id",
                 "physical_object_type_id",
+                "osm_id",
                 "address",
                 "name",
                 "properties",
