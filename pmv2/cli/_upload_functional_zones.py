@@ -85,7 +85,7 @@ def upload_file(  # pylint: disable=too-many-arguments,too-many-locals
     db_path: Path,
     drop_unknown_fz_types: bool,
 ):
-    """Prepare the upload of a single geojson of functional zones data."""
+    """Prepare the upload of a single geojson of functional_zones data."""
     urban_client = config.urban_client
     logger = config.logger
     filename = str(input_file.resolve())
@@ -170,7 +170,7 @@ def upload(
     db_path: Path,
     parallel_workers: int,
 ):
-    """Execute a functional zones uploading from SQLite database."""
+    """Upload functional_zones from SQLite database."""
     if not asyncio.run(config.urban_client.is_alive()):
         print("Urban API at is unavailable, exiting")
         sys.exit(1)

@@ -93,8 +93,19 @@ class UrbanClient(abc.ABC):
         """Upload building with given geometry."""
 
     @abc.abstractmethod
-    async def add_living_building(
-        self, physical_object_id: int, residents_number: int, living_area: float, properties: dict[str, Any]
+    async def add_building(
+        self,
+        physical_object_id: int,
+        *,
+        floors: int | None,
+        building_area_official: float | None,
+        building_area_modeled: float | None,
+        project_type: str | None,
+        floor_type: str | None,
+        wall_material: str | None,
+        built_year: int | None,
+        exploitation_start_year: int | None,
+        properties: dict[str, Any],
     ) -> PhysicalObject:
         """Add living building to a given physical object
         (which is supposed to have physical object type of living building).

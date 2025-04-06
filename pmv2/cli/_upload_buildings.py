@@ -60,10 +60,7 @@ def prepare_file(  # pylint: disable=too-many-locals
     is_living_field: str,
     db_path: Path,
 ):
-    """Prepare a single geojson of buildings data for uploading.
-
-    Be aware that it can place living buildings on top of non-living and otherwise.
-    """
+    """Prepare a single geojson of buildings data for uploading."""
     urban_client = config.urban_client
     logger = config.logger
     filename = str(input_file.resolve())
@@ -121,11 +118,18 @@ def prepare_file(  # pylint: disable=too-many-locals
             gdf,
             filename=filename,
             physical_object_type_mapper=physical_object_type_mapper,
-            residents_number_mapper=_mappers.none_mapper,
-            living_area_mapper=_mappers.get_attribute_mapper(["living_area"]),
-            living_building_properties_mapper=_mappers.empty_dict_mapper,
-            po_data_mapper=_mappers.full_dictionary_mapper,
-            po_address_mapper=_mappers.get_attribute_mapper(["address"]),
+            floors_mapper=_mappers.get_attribute_in_dicts_mapper([["osm_data", "building:levels"], ["frt_data", "floor_count_max"], ["frt_data", "floor_count_min"]]),
+            building_area_official_mapper=_mappers.get_attribute_in_dicts_mapper([["frt_data", "area_land"]]),
+            building_area_modeled_mapper=_mappers.none_mapper,
+            project_type_mapper=_mappers.get_attribute_in_dicts_mapper([["frt_data", "project_type"]]),
+            floor_type_mapper=_mappers.get_attribute_in_dicts_mapper([["frt_data", "floor_type"]]),
+            wall_material_mapper=_mappers.get_attribute_in_dicts_mapper([["frt_data", "wall_material"]]),
+            built_year_mapper=_mappers.get_attribute_in_dicts_mapper([["frt_data", "built_year"]]),
+            exploitation_start_year_mapper=_mappers.get_attribute_in_dicts_mapper([["frt_data", "exploitation_start_year"]]),
+            building_properties_mapper=_mappers.get_attribute_mapper(["frt_data"]),
+            po_data_mapper=_mappers.get_dictionary_mapper_except_paths([["frt_data"], ["osm_data", "building:levels"]]),
+            po_osm_id_mapper=_mappers.get_attribute_mapper(["osm_id"]),
+            po_address_mapper=_mappers.get_osm_address_mapper("osm_data"),
             po_name_mapper=_mappers.get_func_mapper(
                 ["name"],
                 _mappers.get_string_checker_func(lambda name: f"(Здание {name})"),
@@ -155,7 +159,7 @@ def prepare_file(  # pylint: disable=too-many-locals
     type=int,
     default=1,
     show_default=True,
-    help="Number of workers to upload physical objects in parallel",
+    help="Number of workers to upload buildings in parallel",
 )
 def upload(
     config: Config,
@@ -163,7 +167,10 @@ def upload(
     db_path: Path,
     parallel_workers: int,
 ):
-    """Execute a physical objects uploading from SQLite database."""
+    """Upload buildings from SQLite database.
+
+    Be aware that it can place living buildings on top of non-living and otherwise.
+    """
     if not asyncio.run(config.urban_client.is_alive()):
         print("Urban API at is unavailable, exiting")
         sys.exit(1)

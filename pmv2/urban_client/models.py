@@ -38,6 +38,7 @@ class PostPhysicalObject(BaseModel):
     territory_id: int
     physical_object_type_id: int
     centre_point: gjp.Point | None = None
+    osm_id: str | None = None
     address: str | None = None
     name: str | None = None
     properties: dict[str, Any] | None = None

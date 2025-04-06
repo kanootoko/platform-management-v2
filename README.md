@@ -56,7 +56,7 @@ pmv2 physical-objects upload --db-path ./db.sqlite -w 10
 
 ### buildings
 
-Section to manipulate buildings (which are physical_objects with optional living_building data).
+Section to manipulate buildings (which are physical_objects with optional building data).
 
 Firstly designed to upload buildings from OSM + digital city platform + MS buildings project,
 so mappers should be tuned when uploading from a single source.

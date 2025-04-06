@@ -324,23 +324,38 @@ class HTTPUrbanClient(UrbanClient):
         return result
 
     @_handle_exceptions
-    async def add_living_building(
-        self, physical_object_id: int, residents_number: int, living_area: float, properties: dict[str, Any]
+    async def add_building(
+        self,
+        physical_object_id: int,
+        *,
+        floors: int | None,
+        building_area_official: float | None,
+        building_area_modeled: float | None,
+        project_type: str | None,
+        floor_type: str | None,
+        wall_material: str | None,
+        built_year: int | None,
+        exploitation_start_year: int | None,
+        properties: dict[str, Any],
     ) -> PhysicalObject:
         body = {
             "physical_object_id": physical_object_id,
-            "residents_number": residents_number,
-            "living_area": living_area,
+            "floors": floors,
+            "building_area_official": building_area_official,
+            "building_area_modeled": building_area_modeled,
+            "project_type": project_type,
+            "floor_type": floor_type,
+            "wall_material": wall_material,
+            "built_year": built_year,
+            "exploitation_start_year": exploitation_start_year,
             "properties": properties,
         }
-        await self._logger.adebug("executing add_living_building", body=body)
+        await self._logger.adebug("executing add_building", body=body)
         async with self._get_session() as session:
-            resp = await session.post("/api/v1/living_buildings", json=body)
+            resp = await session.post("/api/v1/buildings", json=body)
             if resp.status != 201:
-                await self._logger.aerror(
-                    "error on add_living_building", resp_code=resp.status, resp_text=await resp.text()
-                )
-                raise InvalidStatusCode(f"Unexpected status code on add_living_building: {resp.status}")
+                await self._logger.aerror("error on add_building", resp_code=resp.status, resp_text=await resp.text())
+                raise InvalidStatusCode(f"Unexpected status code on add_building: {resp.status}")
             result = PhysicalObject.model_validate_json(await resp.text())
         return result
 

@@ -177,7 +177,7 @@ def upload(
     db_path: Path,
     parallel_workers: int,
 ):
-    """Execute a physical objects uploading from SQLite database."""
+    """Upload services from SQLite database."""
     if not asyncio.run(config.urban_client.is_alive()):
         print("Urban API at is unavailable, exiting")
         sys.exit(1)
