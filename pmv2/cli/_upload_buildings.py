@@ -118,14 +118,18 @@ def prepare_file(  # pylint: disable=too-many-locals
             gdf,
             filename=filename,
             physical_object_type_mapper=physical_object_type_mapper,
-            floors_mapper=_mappers.get_attribute_in_dicts_mapper([["osm_data", "building:levels"], ["frt_data", "floor_count_max"], ["frt_data", "floor_count_min"]]),
+            floors_mapper=_mappers.get_attribute_in_dicts_mapper(
+                [["osm_data", "building:levels"], ["frt_data", "floor_count_max"], ["frt_data", "floor_count_min"]]
+            ),
             building_area_official_mapper=_mappers.get_attribute_in_dicts_mapper([["frt_data", "area_land"]]),
             building_area_modeled_mapper=_mappers.none_mapper,
             project_type_mapper=_mappers.get_attribute_in_dicts_mapper([["frt_data", "project_type"]]),
             floor_type_mapper=_mappers.get_attribute_in_dicts_mapper([["frt_data", "floor_type"]]),
             wall_material_mapper=_mappers.get_attribute_in_dicts_mapper([["frt_data", "wall_material"]]),
             built_year_mapper=_mappers.get_attribute_in_dicts_mapper([["frt_data", "built_year"]]),
-            exploitation_start_year_mapper=_mappers.get_attribute_in_dicts_mapper([["frt_data", "exploitation_start_year"]]),
+            exploitation_start_year_mapper=_mappers.get_attribute_in_dicts_mapper(
+                [["frt_data", "exploitation_start_year"]]
+            ),
             building_properties_mapper=_mappers.get_attribute_mapper(["frt_data"]),
             po_data_mapper=_mappers.get_dictionary_mapper_except_paths([["frt_data"], ["osm_data", "building:levels"]]),
             po_osm_id_mapper=_mappers.get_attribute_mapper(["osm_id"]),
@@ -161,12 +165,14 @@ def prepare_file(  # pylint: disable=too-many-locals
     show_default=True,
     help="Number of workers to upload buildings in parallel",
 )
-def upload(
-    config: Config,
-    *,
-    db_path: Path,
-    parallel_workers: int,
-):
+@click.option(
+    "--skip-geometry-check",
+    envvar="SKIP_GEOMETRY_CHECK",
+    is_flag=True,
+    show_envvar=True,
+    help="Upload buildings geometry without checking for existance (can lead to duplicated data)",
+)
+def upload(config: Config, *, db_path: Path, parallel_workers: int, skip_geometry_check: bool):
     """Upload buildings from SQLite database.
 
     Be aware that it can place living buildings on top of non-living and otherwise.
@@ -179,7 +185,9 @@ def upload(
 
     sqlite = SQLiteHelper(sqlite3.connect(db_path))
 
-    po_uploader = PhysicalObjectsUploader(urban_client, logger=logger, sqlite=sqlite)
+    po_uploader = PhysicalObjectsUploader(
+        urban_client, logger=logger, skip_geometry_check=skip_geometry_check, sqlite=sqlite
+    )
     uploader = BuildingsUploader(urban_client, sqlite=sqlite, po_uploader=po_uploader, logger=logger)
     asyncio.run(uploader.upload_buildings(parallel_workers))
 

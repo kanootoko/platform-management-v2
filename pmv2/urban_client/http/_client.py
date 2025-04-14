@@ -324,7 +324,7 @@ class HTTPUrbanClient(UrbanClient):
         return result
 
     @_handle_exceptions
-    async def add_building(
+    async def add_building(  # pylint: disable=too-many-arguments
         self,
         physical_object_id: int,
         *,

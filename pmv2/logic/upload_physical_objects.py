@@ -47,10 +47,12 @@ class PhysicalObjectsUploader:
         urban_client: UrbanClient,
         *,
         sqlite: SQLiteHelper,
+        skip_geometry_check: bool = False,
         logger: structlog.stdlib.BoundLogger = ...,
     ):
         self._urban_client = urban_client
         self._sqlite = sqlite
+        self.skip_geometry_check = skip_geometry_check
         if logger is ...:
             self._logger = structlog.get_logger("upload_pysical_objects")
         else:
@@ -169,56 +171,28 @@ class PhysicalObjectsUploader:
 
         Return None if it impossible to upload a physical_object because of unavailable territory_id.
         """
-        objects_around = await self._urban_client.get_objects_around(
-            physical_object.geometry, physical_object.physical_object_type_id
-        )
-        if not physical_object.geometry.is_valid:
-            self._logger.warning("Invalid geometry in upload, fixing", geometry=physical_object.geometry)
-            physical_object.geometry = physical_object.geometry.buffer(0)
-        if not all(objects_around["geometry"].is_valid):
-            self._logger.warning(
-                "Invalid geometry got from Urban API, fixing", around_geometry=physical_object.geometry
+        if self.skip_geometry_check:
+            intersecting = objects_around = gpd.GeoDataFrame(columns=["geometry"], crs=4326)
+        else:
+            objects_around = await self._urban_client.get_objects_around(
+                physical_object.geometry, physical_object.physical_object_type_id
             )
-            objects_around["geometry"] = objects_around["geometry"].buffer(0)
-        intersecting = self._get_intersecting_objects(physical_object.geometry, objects_around)
+            if not physical_object.geometry.is_valid:
+                self._logger.warning("Invalid geometry in upload, fixing", geometry=physical_object.geometry)
+                physical_object.geometry = physical_object.geometry.buffer(0)
+            if not all(objects_around["geometry"].is_valid):
+                self._logger.warning(
+                    "Invalid geometry got from Urban API, fixing", around_geometry=physical_object.geometry
+                )
+                objects_around["geometry"] = objects_around["geometry"].buffer(0)
+            intersecting = self._get_intersecting_objects(physical_object.geometry, objects_around)
 
         if intersecting.shape[0] == 0:
             territory_id = await self._urban_client.get_common_territory_id(physical_object.geometry)
             if territory_id is None:
                 return None
 
-            result = await self._urban_client.upload_physical_object(
-                PostPhysicalObject(
-                    geometry=shapely_to_geometry(physical_object.geometry),
-                    territory_id=territory_id,
-                    physical_object_type_id=physical_object.physical_object_type_id,
-                    centre_point=None,
-                    osm_id=physical_object.osm_id,
-                    address=physical_object.address,
-                    name=physical_object.name,
-                    properties=physical_object.properties,
-                )
-            )
-
-            object_geometry_id = result.object_geometry.object_geometry_id
-            for _, row in self._get_covered_objects(physical_object.geometry, objects_around).iterrows():
-                await self._logger.adebug(
-                    "Updating covered urban_object geometry", resulting_geometry_id=object_geometry_id
-                )
-                try:
-                    covered_urban_object = await self._urban_client.get_urban_object_by_composite(
-                        row["physical_object_id"], row["object_geometry_id"], None
-                    )
-                    await self._urban_client.patch_urban_object(
-                        covered_urban_object.urban_object_id, object_geometry_id=object_geometry_id
-                    )
-                except Exception as exc:  # pylint: disable=broad-except
-                    await self._logger.awarning(
-                        "Failed to update geometry of covered urban_object",
-                        error=repr(exc),
-                        error_type=type(exc),
-                    )
-
+            result = await self.upload_physical_object(territory_id, physical_object, objects_around=objects_around)
             return result, True
 
         physical_object_id = intersecting.iloc[0]["physical_object_id"]
@@ -267,11 +241,52 @@ class PhysicalObjectsUploader:
                 not new_uploaded,
             )
 
+    async def upload_physical_object(
+        self,
+        territory_id: int,
+        physical_object: PhysicalObjectForUpload,
+        objects_around: gpd.GeoDataFrame | None = None,
+    ) -> UrbanObject:
+        """Upload a physical object to a given territory, check objects around for intersections if given."""
+        result = await self._urban_client.upload_physical_object(
+            PostPhysicalObject(
+                geometry=shapely_to_geometry(physical_object.geometry),
+                territory_id=territory_id,
+                physical_object_type_id=physical_object.physical_object_type_id,
+                centre_point=None,
+                osm_id=physical_object.osm_id,
+                address=physical_object.address,
+                name=physical_object.name,
+                properties=physical_object.properties,
+            )
+        )
+
+        object_geometry_id = result.object_geometry.object_geometry_id
+        if objects_around is not None:
+            for _, row in self._get_covered_objects(physical_object.geometry, objects_around).iterrows():
+                await self._logger.adebug(
+                    "Updating covered urban_object geometry", resulting_geometry_id=object_geometry_id
+                )
+                try:
+                    covered_urban_object = await self._urban_client.get_urban_object_by_composite(
+                        row["physical_object_id"], row["object_geometry_id"], None
+                    )
+                    await self._urban_client.patch_urban_object(
+                        covered_urban_object.urban_object_id, object_geometry_id=object_geometry_id
+                    )
+                except Exception as exc:  # pylint: disable=broad-except
+                    await self._logger.awarning(
+                        "Failed to update geometry of covered urban_object",
+                        error=repr(exc),
+                        error_type=type(exc),
+                    )
+        return result
+
     def _get_intersecting_objects(
         self,
         geometry: shapely.geometry.base.BaseGeometry,
         objects_around: gpd.GeoDataFrame,
-        intersection_area_boundary: float = 0.6,
+        intersection_area_boundary: float = 0.5,
     ) -> gpd.GeoDataFrame:
         if objects_around.shape[0] == 0:
             return objects_around
@@ -363,6 +378,8 @@ class PhysicalObjectsHelper:
             self._logger.exception("Error on getting physical_object from SQLite", id=result["id"])
             self.set_upload_error(result["id"], f"Error on get: {repr(exc)}")
             raise
+        if isinstance(result["address"], (int, float)):
+            result["address"] = str(result["address"])
         return PhysicalObjectForUpload(physical_object_id=None, geometry_id=None, **result)
 
     def get_row_by_id(self, physical_object_id: int) -> PhysicalObjectForUpload | None:

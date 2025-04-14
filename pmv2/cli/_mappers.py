@@ -13,7 +13,15 @@ from typing import Any, Callable
 _Data = dict[str, Any]
 _Callback = Callable[[_Data], None]
 
-OSM_ADDRESS_ATTRIBUTES = ["addr:country", "addr:city", "addr:street", "addr:housenumber"]
+OSM_ADDRESS_ATTRIBUTES = [
+    "addr:country",
+    "addr:city",
+    "addr:place",
+    "addr:suburb",
+    "addr:quarter",
+    "addr:street",
+    "addr:housenumber",
+]
 
 
 def none_mapper(_: _Data) -> tuple[None, _Callback]:
@@ -93,7 +101,8 @@ def get_attribute_in_dicts_mapper(
     possible_paths: list[list[str]],
     default_value: Any = None,
 ) -> tuple[Callable[[_Data], Any], _Callback]:
-    """Return a function that will search for a possible names in data dictionary, return value and remove its key in callback if key is found - otherwise return default and empty callback.
+    """Return a function that will search for a possible names in data dictionary, return value and remove
+    its key in callback if key is found - otherwise return default and empty callback.
 
     Example:
 
@@ -192,6 +201,7 @@ def full_dictionary_mapper(upload_data: _Data) -> tuple[_Data, _Callback]:
     """Return full data dictionary and empty callback."""
     return deepcopy(upload_data), _empty_callback
 
+
 def get_string_checker_func(func: Callable[[str], str]) -> Callable[[Any], tuple[str | None, bool]]:
     """Return a function that return string, True and callback based on a given value if it is non-empty string itself.
     Otherwise function will return (None, False, <empty callback>).
@@ -204,7 +214,12 @@ def get_string_checker_func(func: Callable[[str], str]) -> Callable[[Any], tuple
 
     return string_checker
 
+
 def get_osm_address_mapper(inner_field: str | None) -> Callable[[_Data], tuple[int, _Callback]]:
+    """Return a function that tries to get an address from OSM tags in a given dict (or its inner field if given).
+    Successfully used address parts are removed on a callback call.
+    """
+
     def osm_address_mapper(data: _Data) -> int | None:
         if inner_field is None:
             osm_data = data
@@ -216,7 +231,7 @@ def get_osm_address_mapper(inner_field: str | None) -> Callable[[_Data], tuple[i
         used_fields = []
         for attribute in OSM_ADDRESS_ATTRIBUTES:
             if attribute in osm_data:
-                current_address.append(osm_data[attribute])
+                current_address.append(str(osm_data[attribute]))
                 used_fields.append(attribute)
         if len(current_address) > 0:
             if inner_field is not None:
@@ -225,9 +240,13 @@ def get_osm_address_mapper(inner_field: str | None) -> Callable[[_Data], tuple[i
                 used_fields = [[field] for field in used_fields]
             return ", ".join(current_address), _remove_from_dicts_callback(used_fields)
         return None, _empty_callback
+
     return osm_address_mapper
 
+
 def get_dictionary_mapper_except_paths(except_paths: list[list[str]]) -> Callable[[_Data], tuple[_Data, _Callback]]:
+    """Return a function that copies a dict removing given paths nodes."""
+
     def attribute_mapper(upload_data: _Data) -> tuple[_Data, _Callback]:
         data = deepcopy(upload_data)
         for except_path in except_paths:
@@ -243,6 +262,7 @@ def get_dictionary_mapper_except_paths(except_paths: list[list[str]]) -> Callabl
         return data, _empty_callback
 
     return attribute_mapper
+
 
 def _empty_callback(_: _Data):
     pass

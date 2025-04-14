@@ -19,7 +19,7 @@ from pmv2.urban_client.models import UrbanObject
 
 
 @dataclass
-class BuildingForUpload:
+class BuildingForUpload:  # pylint: disable=too-many-instance-attributes
     """Building prepared for upload from SQLite database."""
 
     id: int
@@ -64,7 +64,9 @@ class BuildingsUploader:
         filename: str,
         physical_object_type_mapper: Callable[[dict[str, Any]], tuple[int, bool | None]],
         floors_mapper: Callable[[dict[str, Any]], tuple[int | None, Callable[[dict[str, Any]], None]]],
-        building_area_official_mapper: Callable[[dict[str, Any]], tuple[float | None, Callable[[dict[str, Any]], None]]],
+        building_area_official_mapper: Callable[
+            [dict[str, Any]], tuple[float | None, Callable[[dict[str, Any]], None]]
+        ],
         building_area_modeled_mapper: Callable[[dict[str, Any]], tuple[float | None, Callable[[dict[str, Any]], None]]],
         project_type_mapper: Callable[[dict[str, Any]], tuple[str | None, Callable[[dict[str, Any]], None]]],
         floor_type_mapper: Callable[[dict[str, Any]], tuple[str | None, Callable[[dict[str, Any]], None]]],
@@ -375,6 +377,7 @@ class BuildingsHelper:
         )
         return results[0]["count(*)"]
 
+
 def _try_float(val: Any) -> float | None:
     if val is None:
         return None
@@ -384,7 +387,8 @@ def _try_float(val: Any) -> float | None:
         return float(val)
     except TypeError:
         return None
-    
+
+
 def _try_int(val: Any) -> int | None:
     float_val = _try_float(val)
     if float_val is None:
