@@ -93,7 +93,7 @@ class UrbanClient(abc.ABC):
         """Upload building with given geometry."""
 
     @abc.abstractmethod
-    async def add_building(
+    async def add_building(  # pylint: disable=too-many-arguments
         self,
         physical_object_id: int,
         *,
