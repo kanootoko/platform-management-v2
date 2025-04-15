@@ -411,6 +411,8 @@ class PhysicalObjectsHelper:
             self._logger.exception("Error on getting physical_object from SQLite", id=result["id"])
             self.set_upload_error(result["id"], f"Error on get: {repr(exc)}")
             raise AlreadyLoggedException() from exc
+        if isinstance(result["address"], (int, float)):
+            result["address"] = str(result["address"])
         return PhysicalObjectForUpload(**result)
 
     def set_upload_result(
