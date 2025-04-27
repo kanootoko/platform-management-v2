@@ -143,7 +143,7 @@ class PhysicalObjectsUploader:
         if physical_object.geometry_id is not None and physical_object.physical_object_id is not None:
             return await self._urban_client.get_urban_object_by_composite(
                 physical_object.physical_object_id, physical_object.geometry_id, None
-            )
+            ), False
         try:
             result = await self.upload_physical_object_if_not_exists(physical_object)
             if result is None:

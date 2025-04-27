@@ -385,7 +385,7 @@ def _try_float(val: Any) -> float | None:
         if isinstance(val, str):
             return float(val.replace(",", "."))
         return float(val)
-    except TypeError:
+    except ValueError:
         return None
 
 
