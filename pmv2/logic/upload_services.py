@@ -12,7 +12,7 @@ import structlog
 
 from pmv2.logic.sqlite import SQLiteHelper
 from pmv2.logic.upload_physical_objects import PhysicalObjectsUploader
-from pmv2.logic.utils import AlreadyLoggedException, logging_wrapper
+from pmv2.logic.utils import AlreadyLoggedException, logging_wrapper, try_int, try_str
 from pmv2.urban_client import UrbanClient
 from pmv2.urban_client.models import PostService, Service, UrbanObject
 
@@ -288,14 +288,14 @@ class ServicesHelper:
             self.set_upload_error(result["id"], f"Error on get: {repr(exc)}")
             raise AlreadyLoggedException() from exc
         return ServiceForUpload(
-            id=result["s.id"],
-            name=result["s.name"],
-            capacity=result["s.capacity"],
-            service_type_id=result["s.service_type_id"],
+            id=int(result["s.id"]),
+            name=try_str(result["s.name"]),
+            capacity=try_int(result["s.capacity"]),
+            service_type_id=int(result["s.service_type_id"]),
             properties=result["s.properties"],
-            physical_object_id=result["po.id"],
-            physical_object_id_external=result["po.physical_object_id"],
-            geometry_id_external=result["po.geometry_id"],
+            physical_object_id=try_int(result["po.id"]),
+            physical_object_id_external=try_int(result["po.physical_object_id"]),
+            geometry_id_external=try_int(result["po.geometry_id"]),
         )
 
     def set_upload_result(self, service_id: int, external_id: int, already_existed: bool):

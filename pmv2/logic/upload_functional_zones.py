@@ -11,7 +11,7 @@ import shapely
 import structlog
 
 from pmv2.logic.sqlite import SQLiteHelper
-from pmv2.logic.utils import AlreadyLoggedException, logging_wrapper
+from pmv2.logic.utils import AlreadyLoggedException, logging_wrapper, try_str
 from pmv2.urban_client import UrbanClient
 from pmv2.urban_client.models import FunctionalZone, PostFunctionalZone, shapely_to_geometry
 
@@ -283,7 +283,16 @@ class FunctionalZonesHelper:
             self._logger.exception("Error on getting functional_zone from SQLite", id=result["id"])
             self.set_upload_error(result["id"], f"Error on get: {repr(exc)}")
             raise
-        return FunctionalZoneForUpload(functional_zone_id=None, **result)
+        return FunctionalZoneForUpload(
+            functional_zone_id=None,
+            id=int(result["id"]),
+            functional_zone_type_id=int(result["functional_zone_type_id"]),
+            year=int(result["year"]),
+            source=str(result["source"]),
+            name=try_str(result["name"]),
+            properties=result["properties"],
+            geometry=result["geometry"],
+        )
 
     def set_upload_result(self, functional_zone_id: int, external_id: int, already_existed: bool):
         """Set functional_zone id after uploading."""

@@ -12,7 +12,7 @@ import structlog
 
 from pmv2.logic.sqlite import SQLiteHelper
 from pmv2.logic.upload_physical_objects import PhysicalObjectsUploader
-from pmv2.logic.utils import AlreadyLoggedException, logging_wrapper
+from pmv2.logic.utils import AlreadyLoggedException, logging_wrapper, try_float, try_int, try_str
 from pmv2.urban_client import UrbanClient
 from pmv2.urban_client.http.exceptions import InvalidStatusCode
 from pmv2.urban_client.models import UrbanObject
@@ -335,18 +335,18 @@ class BuildingsHelper:
             self.set_upload_error(result["id"], f"Error on get: {repr(exc)}")
             raise AlreadyLoggedException() from exc
         return BuildingForUpload(
-            id=result["b.id"],
-            floors=_try_int(result["b.floors"]),
-            building_area_official=_try_float(result["b.building_area_official"]),
-            building_area_modeled=_try_float(result["b.building_area_modeled"]),
-            project_type=result["b.project_type"],
-            floor_type=result["b.floor_type"],
-            wall_material=result["b.wall_material"],
-            built_year=_try_int(result["b.built_year"]),
-            exploitation_start_year=_try_int(result["b.exploitation_start_year"]),
+            id=int(result["b.id"]),
+            floors=try_int(result["b.floors"]),
+            building_area_official=try_float(result["b.building_area_official"]),
+            building_area_modeled=try_float(result["b.building_area_modeled"]),
+            project_type=try_str(result["b.project_type"]),
+            floor_type=try_str(result["b.floor_type"]),
+            wall_material=try_str(result["b.wall_material"]),
+            built_year=try_int(result["b.built_year"]),
+            exploitation_start_year=try_int(result["b.exploitation_start_year"]),
             properties=result["b.properties"] or {},
-            physical_object_id=result["po.id"],
-            physical_object_id_external=result["po.physical_object_id"],
+            physical_object_id=try_int(result["po.id"]),
+            physical_object_id_external=try_int(result["po.physical_object_id"]),
         )
 
     def set_upload_result(self, building_id: int, external_id: int, already_existed: bool):
@@ -376,21 +376,3 @@ class BuildingsHelper:
             where=f"building_id IS NULL AND (locked_till IS NULL OR locked_till < '{now}')",
         )
         return results[0]["count(*)"]
-
-
-def _try_float(val: Any) -> float | None:
-    if val is None:
-        return None
-    try:
-        if isinstance(val, str):
-            return float(val.replace(",", "."))
-        return float(val)
-    except ValueError:
-        return None
-
-
-def _try_int(val: Any) -> int | None:
-    float_val = _try_float(val)
-    if float_val is None:
-        return None
-    return int(float_val)

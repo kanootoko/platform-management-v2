@@ -15,7 +15,7 @@ import shapely.wkt
 import structlog
 
 from pmv2.logic.sqlite import SQLiteHelper
-from pmv2.logic.utils import AlreadyLoggedException, logging_wrapper, transform_geometry_4326_to_3857
+from pmv2.logic.utils import AlreadyLoggedException, logging_wrapper, transform_geometry_4326_to_3857, try_int, try_str
 from pmv2.urban_client import UrbanClient
 from pmv2.urban_client.models import PostPhysicalObject, UrbanObject, shapely_to_geometry
 
@@ -141,9 +141,12 @@ class PhysicalObjectsUploader:
         """Upload a physical_object after checking that it does not exist - or return existing one."""
         physical_object = self._helper.get_row_by_id(physical_object_id)
         if physical_object.geometry_id is not None and physical_object.physical_object_id is not None:
-            return await self._urban_client.get_urban_object_by_composite(
-                physical_object.physical_object_id, physical_object.geometry_id, None
-            ), False
+            return (
+                await self._urban_client.get_urban_object_by_composite(
+                    physical_object.physical_object_id, physical_object.geometry_id, None
+                ),
+                False,
+            )
         try:
             result = await self.upload_physical_object_if_not_exists(physical_object)
             if result is None:
@@ -353,7 +356,7 @@ class PhysicalObjectsHelper:
         now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         results = self._sqlite.select(
             "physical_objects_data",
-            columns=["id", "physical_object_type_id", "address", "name", "properties", "geometry"],
+            columns=["id", "physical_object_type_id", "osm_id", "address", "name", "properties", "geometry"],
             where=(
                 "(physical_object_id IS NULL OR geometry_id IS NULL)"
                 f" AND (locked_till IS NULL OR locked_till < '{now}')"
@@ -378,9 +381,17 @@ class PhysicalObjectsHelper:
             self._logger.exception("Error on getting physical_object from SQLite", id=result["id"])
             self.set_upload_error(result["id"], f"Error on get: {repr(exc)}")
             raise
-        if isinstance(result["address"], (int, float)):
-            result["address"] = str(result["address"])
-        return PhysicalObjectForUpload(physical_object_id=None, geometry_id=None, **result)
+        return PhysicalObjectForUpload(
+            physical_object_id=None,
+            geometry_id=None,
+            id=int(result["id"]),
+            physical_object_type_id=int(result["physical_object_type_id"]),
+            osm_id=try_str(result["osm_id"]),
+            address=try_str(result["address"]),
+            name=try_str(result["name"]),
+            properties=result["properties"],
+            geometry=result["geometry"],
+        )
 
     def get_row_by_id(self, physical_object_id: int) -> PhysicalObjectForUpload | None:
         """Get a single building for upload by id without checking and updating locked_till."""
@@ -413,7 +424,17 @@ class PhysicalObjectsHelper:
             raise AlreadyLoggedException() from exc
         if isinstance(result["address"], (int, float)):
             result["address"] = str(result["address"])
-        return PhysicalObjectForUpload(**result)
+        return PhysicalObjectForUpload(
+            id=int(result["id"]),
+            physical_object_type_id=int(result["physical_object_type_id"]),
+            osm_id=try_str(result["osm_id"]),
+            address=try_str(result["address"]),
+            name=try_str(result["name"]),
+            properties=result["properties"],
+            geometry=result["geometry"],
+            physical_object_id=try_int(result["physical_object_id"]),
+            geometry_id=try_int(result["geometry_id"]),
+        )
 
     def set_upload_result(
         self,

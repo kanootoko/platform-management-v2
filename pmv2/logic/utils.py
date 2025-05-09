@@ -89,3 +89,30 @@ def logging_wrapper(
                 raise
 
     return wrapped
+
+def try_float(val: Any) -> float | None:
+    """Try to cast value to float."""
+    if val is None:
+        return None
+    try:
+        if isinstance(val, str):
+            return float(val.replace(",", "."))
+        return float(val)
+    except ValueError:
+        return None
+
+
+def try_int(val: Any) -> int | None:
+    """Try to cast value to integer."""
+    float_val = try_float(val)
+    if float_val is None:
+        return None
+    return int(float_val)
+
+def try_str(val: Any) -> str | None:
+    """Try to cast value to string."""
+    if val is None:
+        return None
+    if isinstance(val, str):
+        return val
+    return str(val)
