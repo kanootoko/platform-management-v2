@@ -90,6 +90,7 @@ def logging_wrapper(
 
     return wrapped
 
+
 def try_float(val: Any) -> float | None:
     """Try to cast value to float."""
     if val is None:
@@ -108,6 +109,7 @@ def try_int(val: Any) -> int | None:
     if float_val is None:
         return None
     return int(float_val)
+
 
 def try_str(val: Any) -> str | None:
     """Try to cast value to string."""

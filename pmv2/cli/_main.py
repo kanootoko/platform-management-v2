@@ -138,7 +138,7 @@ def main(  # pylint: disable=too-many-arguments
     logfiles_config = {}
     if log_file.name not in ("", "-"):
         logfiles_config[str(log_file.resolve())] = "DEBUG"
-    logger = _configure_logging(log_level, {"./pmv2.log": "DEBUG"})
+    logger = _configure_logging(log_level, logfiles_config)
 
     urban_client = make_http_client(
         host,
