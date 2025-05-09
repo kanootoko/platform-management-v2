@@ -65,6 +65,7 @@ class ServicesUploader:
         po_data_mapper: (
             Callable[[dict[str, Any]], tuple[dict[str, Any], Callable[[dict[str, Any]], None]]] | None
         ) = None,
+        po_osm_id_mapper: Callable[[dict[str, Any]], tuple[str, Callable[[dict[str, Any]], None]]],
         po_address_mapper: Callable[[dict[str, Any]], tuple[str, Callable[[dict[str, Any]], None]]],
         po_name_mapper: Callable[[dict[str, Any]], tuple[str, Callable[[dict[str, Any]], None]]],
         po_properties_mapper: Callable[[dict[str, Any]], tuple[dict[str, Any], Callable[[dict[str, Any]], None]]],
@@ -98,6 +99,7 @@ class ServicesUploader:
             po_gdf,
             filename=filename,
             physical_object_type_id_mapper=physical_object_type_id_mapper,
+            osm_id_mapper=po_osm_id_mapper,
             address_mapper=po_address_mapper,
             name_mapper=po_name_mapper,
             properties_mapper=po_properties_mapper,

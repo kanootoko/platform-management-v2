@@ -138,13 +138,16 @@ def upload_file(  # pylint: disable=too-many-locals
             ),
             service_properties_mapper=_mappers.full_dictionary_mapper,
             service_capacity_mapper=_mappers.get_service_capacity_mapper(None),
+            po_osm_id_mapper=_mappers.get_attribute_mapper(["osmid", "osm_id", "id"]),
             po_address_mapper=_mappers.get_attribute_mapper(["address"]),
             po_name_mapper=_mappers.get_func_mapper(
                 DEFAULT_NAME_ATTRIBUTES,
                 _mappers.get_string_checker_func(lambda name: f"(Физический объект для сервиса {name})"),
                 "(Безымянный физический объект)",
             ),
-            po_data_mapper=_mappers.get_first_occurance_filter_dict_mapper([DEFAULT_NAME_ATTRIBUTES, ["geometry"]]),
+            po_data_mapper=_mappers.get_first_occurance_filter_dict_mapper(
+                [DEFAULT_NAME_ATTRIBUTES, ["geometry"], ["osmid", "osm_id", "id"]]
+            ),
             po_properties_mapper=_mappers.empty_dict_mapper,
         )
     )

@@ -105,7 +105,7 @@ def prepare_file(
             filename=filename,
             physical_object_type_id_mapper=_mappers.get_value_mapper(physical_object_type_id),
             address_mapper=_mappers.get_attribute_mapper(["address"]),
-            osm_id_mapper=_mappers.get_attribute_mapper(["osm_id"]),
+            osm_id_mapper=_mappers.get_attribute_mapper(["osmid", "osm_id", "id"]),
             name_mapper=_mappers.get_attribute_mapper(["name"]),
             properties_mapper=_mappers.full_dictionary_mapper,
         )
