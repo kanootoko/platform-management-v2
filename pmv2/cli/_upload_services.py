@@ -146,7 +146,8 @@ def upload_file(  # pylint: disable=too-many-locals
                 "(Безымянный физический объект)",
             ),
             po_data_mapper=_mappers.get_first_occurance_filter_dict_mapper(
-                [DEFAULT_NAME_ATTRIBUTES, ["geometry"], ["osmid", "osm_id", "id"]]
+                [DEFAULT_NAME_ATTRIBUTES, ["geometry"], ["osmid", "osm_id", "id"]],
+                [False, True, True]
             ),
             po_properties_mapper=_mappers.empty_dict_mapper,
         )

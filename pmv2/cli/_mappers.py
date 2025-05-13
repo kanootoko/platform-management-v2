@@ -44,18 +44,26 @@ def get_filter_dict_mapper(keys: list[str]) -> Callable[[_Data], _Data]:
     return filter_dict_mapper
 
 
-def get_first_occurance_filter_dict_mapper(keys_lists: list[list[str]]) -> Callable[[_Data], tuple[_Data, _Callback]]:
-    """Return function that will create a new dictionary containing first of the given keys for each inner list."""
+def get_first_occurance_filter_dict_mapper(keys_lists: list[list[str]], should_drop: list[bool]) -> Callable[[_Data], tuple[_Data, _Callback]]:
+    """Return function that will create a new dictionary containing first of the given keys for each inner list.
+    For each keys list there must be boolean value in `should_drop` list in the same order: for True values
+    they will be removed from data dictionary in callback. False values will be kept as they were."""
+
+    if len(keys_lists) != len(should_drop):
+        raise ValueError("length of keys_list must be equal to length of should_drop")
 
     def filter_dict_mapper(data: _Data) -> _Data:
         result = {}
-        for keys in keys_lists:
+        for_removal = []
+        for keys, drop in zip(keys_lists, should_drop):
             for key in keys:
                 if key in data:
                     result[key] = data[key]
+                    if drop:
+                        for_removal.append(key)
                     break
 
-        return result, _remove_from_dict_multiple_callback(list(result.keys()))
+        return result, _remove_from_dict_multiple_callback(for_removal)
 
     return filter_dict_mapper
 
