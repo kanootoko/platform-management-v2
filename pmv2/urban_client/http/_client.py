@@ -444,6 +444,31 @@ class HTTPUrbanClient(UrbanClient):
             return [FunctionalZone.model_validate(entry) for entry in await resp.json()]
 
     @_handle_exceptions
+    async def get_functional_zones_around(
+        self,
+        geom: shapely.geometry.base.BaseGeometry,
+        year: int,
+        source: str,
+        functional_zone_type_id: int | None = None,
+    ) -> list[FunctionalZone]:
+        path = f"/api/v1/functional_zones/around"
+        body = shapely.geometry.mapping(geom)
+        params = {
+            "year": year,
+            "source": source,
+            "functional_zone_type_id": functional_zone_type_id,
+        }
+        await self._logger.adebug("executing get_functional_zones_around", path=path, params=params)
+        async with self._get_session() as session:
+            resp = await session.post(path, params=params, json=body)
+            if resp.status != 200:
+                await self._logger.aerror(
+                    "error on get_functional_zones_around", resp_code=resp.status, resp_text=await resp.text()
+                )
+                raise InvalidStatusCode(f"Unexpected status code on get_functional_zones_around: {resp.status}")
+            return [FunctionalZone.model_validate(entry) for entry in await resp.json()]
+
+    @_handle_exceptions
     async def upload_functional_zone(self, functional_zone: PostFunctionalZone) -> FunctionalZone:
         body = functional_zone.model_dump(mode="json")
         await self._logger.adebug("executing upload_functional_zone", body=body)

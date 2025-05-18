@@ -142,5 +142,15 @@ class UrbanClient(abc.ABC):
         """Get a list of functional zones for a territory."""
 
     @abc.abstractmethod
+    async def get_functional_zones_around(
+        self,
+        geom: shapely.geometry.base.BaseGeometry,
+        year: int,
+        source: str,
+        functional_zone_type_id: int | None = None,
+    ) -> list[FunctionalZone]:
+        """Get a list of functional zones around the given geometry."""
+
+    @abc.abstractmethod
     async def upload_functional_zone(self, functional_zone: PostFunctionalZone) -> list[FunctionalZone]:
         """Add given functional zone."""

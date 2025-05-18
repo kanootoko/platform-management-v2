@@ -141,7 +141,6 @@ class FunctionalZonesUploader:
             return None
 
         existing = await self._get_functional_zone(
-            territory_id,
             functional_zone.geometry,
             functional_zone.functional_zone_type_id,
             functional_zone.year,
@@ -207,14 +206,13 @@ class FunctionalZonesUploader:
 
     async def _get_functional_zone(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
-        territory_id: int,
         geometry: shapely.geometry.base.BaseGeometry,
         functional_zone_type_id: int,
         year: int,
         source: str,
     ) -> FunctionalZone | None:
-        existing = await self._urban_client.get_functional_zones(
-            territory_id,
+        existing = await self._urban_client.get_functional_zones_around(
+            geometry,
             year,
             source,
             functional_zone_type_id,
